@@ -1,6 +1,7 @@
 import { Controller, Post, Body, Param, Get } from '@nestjs/common';
 import { CallService } from './calls.service';
 import { CreateCallDto } from './dto/create-call.dto';
+import { CallActionDto } from './dto/call-action.dto';
 
 @Controller('calls')
 export class CallController {
@@ -8,17 +9,17 @@ export class CallController {
 
   @Post('create')
   createCall(@Body() data: CreateCallDto) {
-    return this.service.createCall(data.callerId, data.calleeId);
+    return this.service.createCall(data.callerId, data.participants);
   }
 
   @Post(':id/accept')
-  acceptCall(@Param('id') id: string) {
-    return this.service.acceptCall(id);
+  acceptCall(@Param('id') id: string, @Body() data: CallActionDto) {
+    return this.service.acceptCall(id, data.userId);
   }
 
   @Post(':id/reject')
-  rejectCall(@Param('id') id: string) {
-    return this.service.rejectCall(id);
+  rejectCall(@Param('id') id: string, @Body() data: CallActionDto) {
+    return this.service.rejectCall(id, data.userId);
   }
 
   @Post(':id/end')
@@ -28,6 +29,6 @@ export class CallController {
 
   @Get(':id')
   getCall(@Param('id') id: string) {
-    return this.service.getOrFail(id);
+    return this.service.getCallResponse(id);
   }
 }

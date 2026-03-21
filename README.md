@@ -1,18 +1,19 @@
 # NetCalls Backend
 
-Backend API para gestionar llamadas entre usuarios.
+Backend API para gestionar llamadas entre múltiples usuarios.
 
-Implementado con NestJS + TypeScript y un repositorio en memoria (sin base de datos por ahora).
+Implementado con NestJS + TypeScript, WebSocket para comunicación real-time, y un repositorio en memoria (sin base de datos por ahora).
 
 ## Descripcion
 
 Este servicio permite:
 
-- Crear una llamada entre `callerId` y `calleeId`.
-- Aceptar una llamada en estado `RINGING`.
-- Rechazar una llamada en estado `RINGING`.
+- Crear una llamada grupal entre un `callerId` y múltiples `participants`.
+- Aceptar una llamada en estado `RINGING` o `ACCEPTED` (cada usuario por separado).
+- Rechazar una llamada en estado `RINGING` o `ACCEPTED` (cada usuario por separado).
 - Finalizar una llamada en estado `ACCEPTED`.
 - Consultar una llamada por id.
+- WebSocket real-time para notificar cambios en las llamadas.
 
 La aplicacion expone los endpoints bajo el prefijo `calls` y corre por defecto en el puerto `3000`.
 
@@ -27,7 +28,9 @@ http://localhost:3000
 - Node.js
 - NestJS 11
 - TypeScript
+- Socket.IO (WebSocket real-time)
 - Jest (testing)
+- Prettier (code formatting)
 
 ## Estructura del proyecto
 
@@ -47,6 +50,10 @@ src/
       call.entity.ts
     enum/
       callStatusEnum.ts
+    gateway/
+      gateway.ts
+    mappers/
+      call.mapper.ts
   events/
     event.service.ts
 ```
@@ -98,7 +105,7 @@ Request body:
 ```json
 {
   "callerId": "user-a",
-  "calleeId": "user-b"
+  "participants": ["user-b", "user-c", "user-d"]
 }
 ```
 
@@ -106,9 +113,11 @@ Respuesta esperada (ejemplo):
 
 ```json
 {
-  "id": "a4c0a7d6-72e8-4a2d-885f-dbe338a00f3c",
+  "callId": "a4c0a7d6-72e8-4a2d-885f-dbe338a00f3c",
   "callerId": "user-a",
-  "calleeId": "user-b",
+  "participants": ["user-b", "user-c", "user-d"],
+  "acceptedUsers": [],
+  "rejectedUsers": [],
   "status": "RINGING",
   "createdAt": "2026-03-20T19:22:31.331Z"
 }
@@ -119,10 +128,18 @@ Respuesta esperada (ejemplo):
 - Metodo: `POST`
 - Ruta: `/calls/:id/accept`
 
+Request body:
+
+```json
+{
+  "userId": "user-b"
+}
+```
+
 Ejemplo:
 
 ```bash
-curl -X POST http://localhost:3000/calls/<CALL_ID>/accept
+curl -X POST http://localhost:3000/calls/<CALL_ID>/accept -H "Content-Type: application/json" -d '{"userId":"user-b"}'
 ```
 
 ### 3) Rechazar llamada
@@ -130,10 +147,18 @@ curl -X POST http://localhost:3000/calls/<CALL_ID>/accept
 - Metodo: `POST`
 - Ruta: `/calls/:id/reject`
 
+Request body:
+
+```json
+{
+  "userId": "user-b"
+}
+```
+
 Ejemplo:
 
 ```bash
-curl -X POST http://localhost:3000/calls/<CALL_ID>/reject
+curl -X POST http://localhost:3000/calls/<CALL_ID>/reject -H "Content-Type: application/json" -d '{"userId":"user-b"}'
 ```
 
 ### 4) Finalizar llamada
@@ -170,21 +195,42 @@ El enum de estados disponibles es:
 
 Transiciones implementadas actualmente:
 
-- `createCall` crea en `RINGING`.
-- `acceptCall` cambia `RINGING -> ACCEPTED`.
-- `rejectCall` cambia `RINGING -> REJECTED`.
+- `createCall` crea en `RINGING` y registra todos los participantes.
+- `acceptCall` permite a cada usuario aceptar en estado `RINGING` o `ACCEPTED`. Cuando el primero acepta, cambia a `ACCEPTED`.
+- `rejectCall` permite a cada usuario rechazar. Si todos los participantes rechazan en estado `RINGING`, la llamada cambia a `REJECTED`.
 - `endCall` cambia `ACCEPTED -> ENDED`.
+- Timeout automático: si nadie responde en 50 segundos, la llamada cambia a `MISSED`.
 
-## Eventos
+## WebSocket Events
 
-Cada accion emite un evento por consola via `EventService`:
+El gateway emite eventos en tiempo real:
 
-- `call.created`
-- `call.accepted`
-- `call.rejected`
-- `call.ended`
+- `incoming-call`: Se emite cuando se crea una llamada, solo el receptor recibe.
+- `call-accepted`: Se emite cuando un usuario acepta.
+- `call-rejected`: Se emite cuando un usuario rechaza.
+- `call-ended`: Se emite cuando la llamada finaliza.
+- `call-missed`: Se emite cuando la llamada expira sin respuesta.
 
-Actualmente estos eventos se registran con `console.log`.
+Para recibir eventos, primero regístrate:
+
+```javascript
+socket.emit('register', 'user-id');
+socket.on('incoming-call', (call) => {
+  console.log('Llamada entrante:', call);
+});
+```
+
+## Eventos de negocio
+
+Cada acción emite un evento por consola via `EventService`:
+
+- `call.created`: Cuando se crea una llamada.
+- `call.accepted`: Cuando un usuario acepta.
+- `call.rejected`: Cuando todos rechazan.
+- `call.ended`: Cuando finaliza la llamada.
+- `call.missed`: Cuando expira sin respuesta.
+
+Actualmente estos eventos se registran con `console.log` e inyectados en el servicio.
 
 ## Pruebas
 
@@ -205,4 +251,3 @@ Cobertura:
 ```bash
 pnpm run test:cov
 ```
-

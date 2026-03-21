@@ -16,13 +16,13 @@ export class CallRepository {
   }
 
   findActiveCall(userId: string) {
-  const call = [...this.calls.values()].find(
-    (item) =>
-      (item.status === CallStatus.RINGING ||
-        item.status === CallStatus.ACCEPTED) &&
-      (item.callerId === userId || item.calleeId === userId),
-  );
+    const call = [...this.calls.values()].find(
+      (item) =>
+        (item.status === CallStatus.RINGING ||
+          item.status === CallStatus.ACCEPTED) &&
+        (item.callerId === userId || item.participants.includes(userId)),
+    );
 
-  return Promise.resolve(call ?? null);
-}
+    return Promise.resolve(call ?? null);
+  }
 }
