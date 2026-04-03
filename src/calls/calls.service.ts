@@ -4,7 +4,7 @@ import { Call } from "./entities/call.entity";
 import { CallStatus } from "./enum/callStatusEnum";
 import { CallGateway } from "./gateway/gateway";
 import { CallMapper } from "./mappers/call.mapper";
-import { Injectable } from "@nestjs/common";
+import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "crypto";
 
 @Injectable()
@@ -20,12 +20,12 @@ export class CallService {
 
     // validar caller
     const callerBusy = await this.repo.findActiveCall(callerId);
-    if (callerBusy) throw new Error('Caller already in call');
+    if (callerBusy) throw new BadRequestException('Caller already in call');
 
     // validar participantes
     for (const userId of participants) {
       const busy = await this.repo.findActiveCall(userId);
-      if (busy) throw new Error(`User ${userId} already in call`);
+      if (busy) throw new BadRequestException(`User ${userId} already in call`);
     }
 
     const call: Call = {
@@ -69,11 +69,11 @@ export class CallService {
       call.status !== CallStatus.RINGING &&
       call.status !== CallStatus.ACCEPTED
     ) {
-      throw new Error('Invalid state');
+      throw new BadRequestException('Invalid state: Call cannot be accepted');
     }
 
     if (!call.participants.includes(userId)) {
-      throw new Error('User not part of call');
+      throw new BadRequestException('User not part of call');
     }
 
     if (!call.acceptedUsers.includes(userId)) {
@@ -97,11 +97,11 @@ export class CallService {
 
     if (call.status !== CallStatus.RINGING &&
       call.status !== CallStatus.ACCEPTED) {
-      throw new Error('Invalid state');
+      throw new BadRequestException('Invalid state: Call cannot be rejected');
     }
 
     if (!call.participants.includes(userId)) {
-      throw new Error('User not part of call');
+      throw new BadRequestException('User not part of call');
     }
 
     if (!call.rejectedUsers.includes(userId)) {
@@ -126,7 +126,7 @@ export class CallService {
     const call = await this.getOrFail(callId);
 
     if (call.status !== CallStatus.ACCEPTED) {
-      throw new Error('Call not active');
+      throw new BadRequestException('Call not active');
     }
 
     call.status = CallStatus.ENDED;
@@ -163,7 +163,7 @@ export class CallService {
 
   async getOrFail(callId: string): Promise<Call> {
     const call = await this.repo.findById(callId);
-    if (!call) throw new Error('Call not found');
+    if (!call) throw new NotFoundException('Call not found');
     return call;
   }
 
@@ -174,11 +174,11 @@ export class CallService {
 
   async validateUsers(callerId: string, participants: string[]) {
     if (!callerId || !participants || participants.length === 0) {
-      throw new Error('Caller and participants are required');
+      throw new BadRequestException('Caller and participants are required');
     }
 
     if (participants.includes(callerId)) {
-      throw new Error('Caller cannot be in participants');
+      throw new BadRequestException('Caller cannot be in participants');
     }
   }
 }
