@@ -1,24 +1,17 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
-name: Build and deploy Node.js app to Azure Web App - omnicode-api-authentication
+name: Build and deploy Node.js app to Azure Web App - omnicode-api-calls
 
 on:
   push:
     branches:
       - main
-      - develop
-  pull_request:
-    branches:
-      - main
-      - develop
-    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read #This is required for actions/checkout
 
@@ -34,7 +27,7 @@ jobs:
         run: |
           npm install
           npm run build --if-present
-          npm run test -- --passWithNoTests
+          npm run test --if-present
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -45,7 +38,6 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == 'refs/heads/main'
     permissions:
       id-token: write #This is required for requesting the JWT
       contents: read #This is required for actions/checkout
@@ -59,14 +51,15 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_EF286A88E71B42D6AAC90513B07DD4ED }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_87FFDAFE0C914C21A8A54818478F762F }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_1DDE568439A7489FB2264B914C0F9DE0 }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_55ED49D75A5D40EC88D9491ECD34982B }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_F08DFB29C3C344FBA4E5B60E510B4F7C }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_40528EFB082E4C1E9802753D83E7C7D1 }}
 
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'omnicode-api-authentication'
+          app-name: 'omnicode-api-calls'
           slot-name: 'Production'
-          package: . 
+          package: .
+          
