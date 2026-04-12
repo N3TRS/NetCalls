@@ -31,4 +31,14 @@ export class CallController {
   getCall(@Param('id') id: string) {
     return this.service.getCallResponse(id);
   }
+
+  @Post('users/:userId/cleanup')
+  cleanupUserCalls(@Param('userId') userId: string) {
+    return this.service.cleanupUserCalls(userId);
+  }
+
+  @Get()
+  getAllCalls() {
+    return this.service.getAllCalls();
+  }
 }

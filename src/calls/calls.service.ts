@@ -125,7 +125,10 @@ export class CallService {
   async endCall(callId: string) {
     const call = await this.getOrFail(callId);
 
-    if (call.status !== CallStatus.ACCEPTED) {
+    // Allow ending calls that are RINGING or ACCEPTED
+    // RINGING: caller hangs up before anyone accepts
+    // ACCEPTED: normal call end
+    if (call.status !== CallStatus.ACCEPTED && call.status !== CallStatus.RINGING) {
       throw new BadRequestException('Call not active');
     }
 
@@ -180,5 +183,18 @@ export class CallService {
     if (participants.includes(callerId)) {
       throw new BadRequestException('Caller cannot be in participants');
     }
+  }
+
+  async cleanupUserCalls(userId: string) {
+    const count = await this.repo.forceEndUserCalls(userId);
+    return {
+      success: true,
+      message: `Ended ${count} active call(s) for user ${userId}`,
+      count,
+    };
+  }
+
+  async getAllCalls() {
+    return await this.repo.findAll();
   }
 }
