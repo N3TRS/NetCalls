@@ -25,4 +25,27 @@ export class CallRepository {
 
     return Promise.resolve(call ?? null);
   }
+
+  async forceEndUserCalls(userId: string): Promise<number> {
+    let count = 0;
+    const activeCalls = [...this.calls.values()].filter(
+      (call) =>
+        (call.status === CallStatus.RINGING || call.status === CallStatus.ACCEPTED) &&
+        (call.callerId === userId || call.participants.includes(userId)),
+    );
+
+    for (const call of activeCalls) {
+      call.status = CallStatus.ENDED;
+      call.endedAt = new Date();
+      await this.save(call);
+      count++;
+    }
+
+    return count;
+  }
+
+  // Get all calls 
+  findAll() {
+    return Promise.resolve([...this.calls.values()]);
+  }
 }

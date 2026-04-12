@@ -1,8 +1,8 @@
 # NetCalls Backend
 
-Backend API para gestionar llamadas entre múltiples usuarios.
+Backend API para gestionar llamadas en tiempo real con audio/video entre múltiples usuarios.
 
-Implementado con NestJS + TypeScript, WebSocket para comunicación real-time, y un repositorio en memoria (sin base de datos por ahora).
+Implementado con NestJS + TypeScript, WebSocket (Socket.IO) para comunicación bidireccional, señalización WebRTC para audio/video, y un repositorio en memoria (sin base de datos por ahora).
 
 ## Descripcion
 
@@ -36,26 +36,28 @@ http://localhost:3000
 
 ```txt
 src/
-  app.module.ts
-  main.ts
+  app.module.ts           # Módulo principal
+  main.ts                 # Entry point con CORS y validación global
   calls/
-    calls.controller.ts
-    calls.service.ts
-    calls.repository.ts
+    calls.controller.ts   # REST endpoints
+    calls.service.ts      # Lógica de negocio con excepciones NestJS
+    calls.repository.ts   # Persistencia en memoria
     dto/
-      create-call.dto.ts
-      call-action.dto.ts
+      create-call.dto.ts  # DTO con validación class-validator
+      call-action.dto.ts  # DTO para accept/reject
       call-response.dto.ts
     entities/
-      call.entity.ts
+      call.entity.ts      # Entidad de llamada
     enum/
-      callStatusEnum.ts
+      callStatusEnum.ts   # Estados: RINGING, ACCEPTED, REJECTED, ENDED, MISSED
     gateway/
-      gateway.ts
+      gateway.ts          # WebSocket gateway con señalización WebRTC
     mappers/
-      call.mapper.ts
+      call.mapper.ts      # Transformación Call → DTO
   events/
-    event.service.ts
+    event.service.ts      # Sistema de eventos de negocio
+  types/
+    websocket.types.ts    # Tipos TypeScript para WebSocket
 ```
 
 ## Instalacion
@@ -203,20 +205,41 @@ Transiciones implementadas actualmente:
 
 ## WebSocket Events
 
-El gateway emite eventos en tiempo real:
+El gateway emite eventos en tiempo real para gestión de llamadas y señalización WebRTC:
 
-- `incoming-call`: Se emite cuando se crea una llamada, solo el receptor recibe.
-- `call-accepted`: Se emite cuando un usuario acepta.
-- `call-rejected`: Se emite cuando un usuario rechaza.
-- `call-ended`: Se emite cuando la llamada finaliza.
-- `call-missed`: Se emite cuando la llamada expira sin respuesta.
+### Eventos de Llamadas:
+- `incoming-call`: Se emite cuando se crea una llamada (solo receptores)
+- `call-accepted`: Se emite cuando un usuario acepta
+- `call-rejected`: Se emite cuando un usuario rechaza
+- `call-ended`: Se emite cuando la llamada finaliza
+- `call-missed`: Se emite cuando la llamada expira sin respuesta
 
-Para recibir eventos, primero regístrate:
+### Eventos WebRTC (señalización):
+- `webrtc:offer`: Intercambio de oferta SDP para conexión peer-to-peer
+- `webrtc:answer`: Respuesta SDP a una oferta recibida
+- `webrtc:ice-candidate`: Intercambio de ICE candidates para NAT traversal
+
+### Eventos de Gestión:
+- `register`: Registrar un usuario con su socketId
+- `join-call`: Unirse a un room de llamada específico
+- `leave-call`: Salir de un room de llamada
+- `ping`: Heartbeat para verificar conexión activa
+
+**Para documentación completa del API WebSocket, ver [WEBSOCKET_API.md](./WEBSOCKET_API.md)**
+
+Ejemplo de uso básico:
 
 ```javascript
 socket.emit('register', 'user-id');
+
 socket.on('incoming-call', (call) => {
   console.log('Llamada entrante:', call);
+});
+
+socket.on('webrtc:offer', async ({ from, signal }) => {
+  await peerConnection.setRemoteDescription(signal);
+  const answer = await peerConnection.createAnswer();
+  socket.emit('webrtc:answer', { to: from, signal: answer });
 });
 ```
 
@@ -232,22 +255,3 @@ Cada acción emite un evento por consola via `EventService`:
 
 Actualmente estos eventos se registran con `console.log` e inyectados en el servicio.
 
-## Pruebas
-
-Ejecutar pruebas unitarias:
-
-```bash
-pnpm run test
-```
-
-Ejecutar pruebas e2e:
-
-```bash
-pnpm run test:e2e
-```
-
-Cobertura:
-
-```bash
-pnpm run test:cov
-```
