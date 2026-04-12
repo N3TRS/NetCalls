@@ -16,12 +16,12 @@ interface WebRTCSignal {
 })
 export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
-  server: Server;
+  server!: Server;
 
   private readonly logger = new Logger(CallGateway.name);
-  private users = new Map<string, string>(); // userId -> socketId
-  private sockets = new Map<string, string>(); // socketId -> userId
-  private callRooms = new Map<string, Set<string>>(); // callId -> Set<userId>
+  private users = new Map<string, string>();
+  private sockets = new Map<string, string>();
+  private callRooms = new Map<string, Set<string>>();
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
@@ -34,7 +34,6 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.users.delete(userId);
       this.sockets.delete(client.id);
 
-      // Remover de rooms activos
       this.callRooms.forEach((users, callId) => {
         if (users.has(userId)) {
           users.delete(userId);
@@ -47,23 +46,28 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('register')
-  handleRegister(@MessageBody() userId: string,@ConnectedSocket() client: Socket,) {
+  handleRegister(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
+    const userId = typeof data === 'string' ? data : data?.userId;
+    
     if (!userId) {
       this.logger.warn(`Registration attempt without userId: ${client.id}`);
+      this.logger.warn(`Received data:`, data);
       return { success: false, error: 'userId is required' };
     }
 
-    // Eliminar registro anterior si existe
     const oldSocketId = this.users.get(userId);
     if (oldSocketId) {
+      this.logger.log(`User ${userId} was already registered with socket ${oldSocketId}, updating to ${client.id}`);
       this.sockets.delete(oldSocketId);
     }
 
-    // Registrar nuevo
     this.users.set(userId, client.id);
     this.sockets.set(client.id, userId);
 
     this.logger.log(`User ${userId} registered with socket ${client.id}`);
+
+    client.emit('registered', { success: true, userId, socketId: client.id });
+
     return { success: true, userId, socketId: client.id };
   }
 
@@ -108,8 +112,6 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.logger.log(`User ${userId} left call ${callId}`);
     return { success: true, callId, userId };
   }
-
-  // ============= WebRTC  =============
 
   @SubscribeMessage('webrtc:offer')
   handleWebRTCOffer(@MessageBody() data: WebRTCSignal,@ConnectedSocket() client: Socket,) {
@@ -179,15 +181,19 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return { pong: true, timestamp: Date.now(), userId };
   }
 
-  // ============= Call Notifications =============
-
   sendIncomingCall(userId: string, data: Call) {
+    this.logger.log(`Attempting to send incoming call to user ${userId}`);
+    this.logger.log(`Current users map:`, Array.from(this.users.entries()));
+
     const socketId = this.users.get(userId);
     if (socketId) {
+      this.logger.log(`Found socket ${socketId} for user ${userId}`);
       this.server.to(socketId).emit('incoming-call', data);
-      this.logger.log(`Incoming call sent to user ${userId}`);
+      this.logger.log(`Incoming call event emitted to user ${userId} (socket: ${socketId})`);
+      this.logger.log(`Call data:`, data);
     } else {
       this.logger.warn(`User ${userId} not connected, cannot send incoming call`);
+      this.logger.warn(`Available users:`, Array.from(this.users.keys()));
     }
   }
 
@@ -222,8 +228,6 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(`Call missed notification sent to user ${userId}`);
     }
   }
-
-  // ============= Utility Methods =============
 
   isUserConnected(userId: string): boolean {
     return this.users.has(userId);

@@ -16,12 +16,10 @@ export interface LeaveCallPayload {
 }
 
 export interface WebRTCSignalPayload {
-  from?: string; // Será completado por el servidor
+  from?: string;
   to: string;
   signal: RTCSessionDescriptionInit | RTCIceCandidateInit;
 }
-
-// ============= Eventos del Servidor al Cliente =============
 
 export interface IncomingCallEvent {
   event: 'incoming-call';

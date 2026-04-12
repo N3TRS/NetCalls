@@ -4,10 +4,12 @@ import { CallRepository } from './calls/calls.repository';
 import { CallService } from './calls/calls.service';
 import { EventService } from './events/event.service';
 import { CallGateway } from './calls/gateway/gateway';
+import { ConfigModule } from '@nestjs/config';
+import { MetricsController } from './metrics.controller';
 
 @Module({
-  imports: [],
-  controllers: [CallController],
+  imports: [ConfigModule.forRoot({ isGlobal: true })],
+  controllers: [CallController, MetricsController],
   providers: [CallService, CallRepository, EventService, CallGateway],
   exports: [EventService],
 })
