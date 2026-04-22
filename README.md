@@ -19,10 +19,6 @@ La aplicacion expone los endpoints bajo el prefijo `calls` y corre por defecto e
 
 Base URL local:
 
-```txt
-http://localhost:3000
-```
-
 ## Stack
 
 - Node.js

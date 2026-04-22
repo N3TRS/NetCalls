@@ -9,9 +9,10 @@ import { ConfigModule } from '@nestjs/config';
 import { MetricsController } from './metrics/metrics.controller';
 import { MetricsService } from './metrics/metrics.service';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
+import { AuthIntegrationModule } from './auth-integration/auth-integration.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true })],
+  imports: [ConfigModule.forRoot({ isGlobal: true }), AuthIntegrationModule],
   controllers: [CallController, MetricsController],
   providers: [
     CallService,
