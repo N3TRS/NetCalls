@@ -8,10 +8,7 @@ async function bootstrap() {
 
   const configService = app.get(ConfigService);
 
-  app.enableCors({
-    origin: configService.get<string>('FRONTEND_URL'),
-    credentials: true,
-  });
+  app.enableCors();
 
   app.useGlobalPipes(
     new ValidationPipe({
