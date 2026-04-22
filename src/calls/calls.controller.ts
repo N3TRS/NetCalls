@@ -1,8 +1,11 @@
-import { Controller, Post, Body, Param, Get } from '@nestjs/common';
+import { Controller, Post, Body, Param, Get, UseGuards } from '@nestjs/common';
 import { CallService } from './calls.service';
 import { CreateCallDto } from './dto/create-call.dto';
 import { CallActionDto } from './dto/call-action.dto';
+import { JwtAuthGuard } from 'src/auth-integration/guards/jwt-auth.guard';
 
+
+@UseGuards(JwtAuthGuard)
 @Controller('calls')
 export class CallController {
   constructor(private service: CallService) {}
