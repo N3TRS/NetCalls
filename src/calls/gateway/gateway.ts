@@ -11,6 +11,7 @@ interface WebRTCSignal {
 }
 
 @WebSocketGateway({
+  path: '/calls/socket.io',
   cors: { origin: '*' },
   transports: ['websocket', 'polling'],
 })
