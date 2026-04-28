@@ -4,6 +4,7 @@ export class Call {
   id: string;
   callerId: string;
   participants: string[];
+  activeParticipants: string[];
   acceptedUsers: string[];
   rejectedUsers: string[];
   status: CallStatus;

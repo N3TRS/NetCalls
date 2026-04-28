@@ -4,7 +4,7 @@ import { Call } from "./entities/call.entity";
 import { CallStatus } from "./enum/callStatusEnum";
 import { CallGateway } from "./gateway/gateway";
 import { CallMapper } from "./mappers/call.mapper";
-import { Injectable, BadRequestException, NotFoundException } from "@nestjs/common";
+import { Injectable, BadRequestException, NotFoundException, forwardRef, Inject } from "@nestjs/common";
 import { randomUUID } from "crypto";
 
 @Injectable()
@@ -12,6 +12,7 @@ export class CallService {
   constructor(
     private repo: CallRepository,
     private eventService: EventService,
+    @Inject(forwardRef(() => CallGateway))
     private gateway: CallGateway,
   ) {}
 
@@ -32,6 +33,7 @@ export class CallService {
       id: randomUUID(),
       callerId,
       participants,
+      activeParticipants: [callerId],
       acceptedUsers: [],
       rejectedUsers: [],
       status: CallStatus.RINGING,
@@ -78,6 +80,10 @@ export class CallService {
 
     if (!call.acceptedUsers.includes(userId)) {
       call.acceptedUsers.push(userId);
+    }
+
+    if (!call.activeParticipants.includes(userId)) {
+      call.activeParticipants.push(userId);
     }
 
     if (call.status === CallStatus.RINGING) {
@@ -143,7 +149,7 @@ export class CallService {
     return CallMapper.toResponse(call);
   }
 
-  private notifyAll(call: Call, type: string) {
+  private notifyAll(call: Call, type: string, actorUserId?: string) {
     const users = [call.callerId, ...call.participants];
 
     users.forEach((userId) => {
@@ -160,8 +166,55 @@ export class CallService {
         case 'missed':
           this.gateway.sendCallMissed(userId, call);
           break;
+        case 'user-left':
+          if (userId !== actorUserId) {
+            this.gateway.sendUserLeft(userId, call, actorUserId!);
+          }
+          break;
+        case 'user-joined':
+          this.gateway.sendUserJoined(userId, call, actorUserId!);
+          break;
       }
     });
+  }
+
+  async leaveCall(callId: string, userId: string) {
+    const call = await this.getOrFail(callId);
+
+    if (call.status !== CallStatus.ACCEPTED && call.status !== CallStatus.RINGING) {
+      throw new BadRequestException('Call not active');
+    }
+
+    call.activeParticipants = call.activeParticipants.filter((id) => id !== userId);
+    await this.repo.save(call);
+
+    if (call.activeParticipants.length <= 1) {
+      return this.endCall(callId);
+    }
+
+    this.notifyAll(call, 'user-left', userId);
+    return CallMapper.toResponse(call);
+  }
+
+  async joinCall(callId: string, userId: string) {
+    const call = await this.getOrFail(callId);
+
+    if (call.status !== CallStatus.ACCEPTED) {
+      throw new BadRequestException('Call is not active');
+    }
+
+    if (!call.participants.includes(userId)) {
+      call.participants.push(userId);
+    }
+
+    if (!call.activeParticipants.includes(userId)) {
+      call.activeParticipants.push(userId);
+    }
+
+    await this.repo.save(call);
+
+    this.notifyAll(call, 'user-joined', userId);
+    return CallMapper.toResponse(call);
   }
 
   async getOrFail(callId: string): Promise<Call> {

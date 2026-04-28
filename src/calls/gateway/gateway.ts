@@ -4,8 +4,10 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Call } from '../entities/call.entity';
-import { Logger } from '@nestjs/common';
+import { forwardRef, Inject, Logger } from '@nestjs/common';
 import { CallRepository } from '../calls.repository';
+import { CallService } from '../calls.service';
+import { CallStatus } from '../enum/callStatusEnum';
 
 interface WebRTCSignal {
   from: string;
@@ -27,7 +29,11 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private sockets = new Map<string, string>();
   private callRooms = new Map<string, Set<string>>();
 
-  constructor(private readonly repo: CallRepository) {}
+  constructor(
+    private readonly repo: CallRepository,
+    @Inject(forwardRef(() => CallService))
+    private readonly callService: CallService,
+  ) {}
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
@@ -49,9 +55,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       });
 
-      this.repo.forceEndUserCalls(userId).then((count) => {
-        if (count > 0) {
-          this.logger.log(`Force-ended ${count} active call(s) for disconnected user ${userId}`);
+      this.repo.findActiveCall(userId).then((call) => {
+        if (call) {
+          this.callService.leaveCall(call.id, userId).catch(() => {});
+          this.logger.log(`User ${userId} left call ${call.id} on disconnect`);
         }
       });
     }
@@ -80,6 +87,16 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     client.emit('registered', { success: true, userId, socketId: client.id });
 
+    // Notify late joiners about any ongoing call they are not part of
+    this.repo.findAll().then((calls) => {
+      const activeCall = calls.find(
+        (c) => c.status === CallStatus.ACCEPTED && !c.activeParticipants.includes(userId),
+      );
+      if (activeCall) {
+        client.emit('call-in-progress', activeCall);
+      }
+    });
+
     return { success: true, userId, socketId: client.id };
   }
 
@@ -105,7 +122,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('leave-call')
-  handleLeaveCall(
+  async handleLeaveCall(
     @MessageBody() data: { callId: string; userId: string },
     @ConnectedSocket() client: Socket,
   ) {
@@ -120,6 +137,8 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     client.leave(`call:${callId}`);
+
+    await this.callService.leaveCall(callId, userId).catch(() => {});
 
     this.logger.log(`User ${userId} left call ${callId}`);
     return { success: true, callId, userId };
@@ -253,6 +272,22 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   broadcastToCall(callId: string, event: string, data: any) {
     this.server.to(`call:${callId}`).emit(event, data);
     this.logger.log(`Broadcast to call ${callId}: ${event}`);
+  }
+
+  sendUserLeft(userId: string, data: Call, leavingUserId: string) {
+    const socketId = this.users.get(userId);
+    if (socketId) {
+      this.server.to(socketId).emit('user-left', { call: data, userId: leavingUserId });
+      this.logger.log(`user-left notification sent to ${userId} (left: ${leavingUserId})`);
+    }
+  }
+
+  sendUserJoined(userId: string, data: Call, joiningUserId: string) {
+    const socketId = this.users.get(userId);
+    if (socketId) {
+      this.server.to(socketId).emit('user-joined', { call: data, userId: joiningUserId });
+      this.logger.log(`user-joined notification sent to ${userId} (joined: ${joiningUserId})`);
+    }
   }
 
 }
