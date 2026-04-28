@@ -182,7 +182,11 @@ export class CallService {
     const call = await this.getOrFail(callId);
 
     if (call.status !== CallStatus.ACCEPTED && call.status !== CallStatus.RINGING) {
-      throw new BadRequestException('Call not active');
+      return CallMapper.toResponse(call);
+    }
+
+    if (!call.activeParticipants.includes(userId)) {
+      return CallMapper.toResponse(call);
     }
 
     call.activeParticipants = call.activeParticipants.filter((id) => id !== userId);

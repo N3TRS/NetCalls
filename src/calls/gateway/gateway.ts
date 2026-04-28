@@ -122,7 +122,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('leave-call')
-  async handleLeaveCall(
+  handleLeaveCall(
     @MessageBody() data: { callId: string; userId: string },
     @ConnectedSocket() client: Socket,
   ) {
@@ -137,8 +137,6 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     client.leave(`call:${callId}`);
-
-    await this.callService.leaveCall(callId, userId).catch(() => {});
 
     this.logger.log(`User ${userId} left call ${callId}`);
     return { success: true, callId, userId };

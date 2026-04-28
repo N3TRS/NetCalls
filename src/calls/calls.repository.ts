@@ -20,7 +20,7 @@ export class CallRepository {
       (item) =>
         (item.status === CallStatus.RINGING ||
           item.status === CallStatus.ACCEPTED) &&
-        (item.callerId === userId || item.participants.includes(userId)),
+        (item.callerId === userId || item.activeParticipants?.includes(userId)),
     );
 
     return Promise.resolve(call ?? null);
@@ -31,7 +31,7 @@ export class CallRepository {
     const activeCalls = [...this.calls.values()].filter(
       (call) =>
         (call.status === CallStatus.RINGING || call.status === CallStatus.ACCEPTED) &&
-        (call.callerId === userId || call.participants.includes(userId)),
+        (call.callerId === userId || call.activeParticipants?.includes(userId)),
     );
 
     for (const call of activeCalls) {
