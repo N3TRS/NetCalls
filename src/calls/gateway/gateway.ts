@@ -1,5 +1,7 @@
-import {WebSocketGateway,WebSocketServer,SubscribeMessage,ConnectedSocket,
-  MessageBody,OnGatewayConnection,OnGatewayDisconnect,} from '@nestjs/websockets';
+import {
+  WebSocketGateway, WebSocketServer, SubscribeMessage, ConnectedSocket,
+  MessageBody, OnGatewayConnection, OnGatewayDisconnect,
+} from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Call } from '../entities/call.entity';
 import { Logger } from '@nestjs/common';
@@ -13,6 +15,7 @@ interface WebRTCSignal {
 @WebSocketGateway({
   cors: { origin: '*' },
   transports: ['websocket', 'polling'],
+  path: '/calls/socket.io',
 })
 export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
@@ -48,7 +51,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('register')
   handleRegister(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
     const userId = typeof data === 'string' ? data : data?.userId;
-    
+
     if (!userId) {
       this.logger.warn(`Registration attempt without userId: ${client.id}`);
       this.logger.warn(`Received data:`, data);
@@ -114,7 +117,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('webrtc:offer')
-  handleWebRTCOffer(@MessageBody() data: WebRTCSignal,@ConnectedSocket() client: Socket,) {
+  handleWebRTCOffer(@MessageBody() data: WebRTCSignal, @ConnectedSocket() client: Socket,) {
     const { to, signal } = data;
     const from = this.sockets.get(client.id);
 
@@ -133,7 +136,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('webrtc:answer')
-  handleWebRTCAnswer(@MessageBody() data: WebRTCSignal,@ConnectedSocket() client: Socket,) {
+  handleWebRTCAnswer(@MessageBody() data: WebRTCSignal, @ConnectedSocket() client: Socket,) {
     const { to, signal } = data;
     const from = this.sockets.get(client.id);
 
