@@ -30,7 +30,8 @@ export class CallRepository {
     let count = 0;
     const activeCalls = [...this.calls.values()].filter(
       (call) =>
-        (call.status === CallStatus.RINGING || call.status === CallStatus.ACCEPTED) &&
+        (call.status === CallStatus.RINGING ||
+          call.status === CallStatus.ACCEPTED) &&
         (call.callerId === userId || call.activeParticipants?.includes(userId)),
     );
 
@@ -44,7 +45,7 @@ export class CallRepository {
     return count;
   }
 
-  // Get all calls 
+  // Get all calls
   findAll() {
     return Promise.resolve([...this.calls.values()]);
   }

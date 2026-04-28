@@ -1,11 +1,17 @@
-import { EventService } from "src/events/event.service";
-import { CallRepository } from "./calls.repository";
-import { Call } from "./entities/call.entity";
-import { CallStatus } from "./enum/callStatusEnum";
-import { CallGateway } from "./gateway/gateway";
-import { CallMapper } from "./mappers/call.mapper";
-import { Injectable, BadRequestException, NotFoundException, forwardRef, Inject } from "@nestjs/common";
-import { randomUUID } from "crypto";
+import { EventService } from 'src/events/event.service';
+import { CallRepository } from './calls.repository';
+import { Call } from './entities/call.entity';
+import { CallStatus } from './enum/callStatusEnum';
+import { CallGateway } from './gateway/gateway';
+import { CallMapper } from './mappers/call.mapper';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  forwardRef,
+  Inject,
+} from '@nestjs/common';
+import { randomUUID } from 'crypto';
 
 @Injectable()
 export class CallService {
@@ -101,8 +107,10 @@ export class CallService {
   async rejectCall(callId: string, userId: string) {
     const call = await this.getOrFail(callId);
 
-    if (call.status !== CallStatus.RINGING &&
-      call.status !== CallStatus.ACCEPTED) {
+    if (
+      call.status !== CallStatus.RINGING &&
+      call.status !== CallStatus.ACCEPTED
+    ) {
       throw new BadRequestException('Invalid state: Call cannot be rejected');
     }
 
@@ -116,8 +124,10 @@ export class CallService {
 
     await this.repo.save(call);
 
-    if (call.status === CallStatus.RINGING &&
-      call.rejectedUsers.length === call.participants.length) {
+    if (
+      call.status === CallStatus.RINGING &&
+      call.rejectedUsers.length === call.participants.length
+    ) {
       call.status = CallStatus.REJECTED;
       await this.repo.save(call);
     }
@@ -127,14 +137,16 @@ export class CallService {
     return CallMapper.toResponse(call);
   }
 
-
   async endCall(callId: string) {
     const call = await this.getOrFail(callId);
 
     // Allow ending calls that are RINGING or ACCEPTED
     // RINGING: caller hangs up before anyone accepts
     // ACCEPTED: normal call end
-    if (call.status !== CallStatus.ACCEPTED && call.status !== CallStatus.RINGING) {
+    if (
+      call.status !== CallStatus.ACCEPTED &&
+      call.status !== CallStatus.RINGING
+    ) {
       throw new BadRequestException('Call not active');
     }
 
@@ -181,7 +193,10 @@ export class CallService {
   async leaveCall(callId: string, userId: string) {
     const call = await this.getOrFail(callId);
 
-    if (call.status !== CallStatus.ACCEPTED && call.status !== CallStatus.RINGING) {
+    if (
+      call.status !== CallStatus.ACCEPTED &&
+      call.status !== CallStatus.RINGING
+    ) {
       return CallMapper.toResponse(call);
     }
 
@@ -189,7 +204,9 @@ export class CallService {
       return CallMapper.toResponse(call);
     }
 
-    call.activeParticipants = call.activeParticipants.filter((id) => id !== userId);
+    call.activeParticipants = call.activeParticipants.filter(
+      (id) => id !== userId,
+    );
     await this.repo.save(call);
 
     if (call.activeParticipants.length <= 1) {
@@ -218,6 +235,52 @@ export class CallService {
     await this.repo.save(call);
 
     this.notifyAll(call, 'user-joined', userId);
+    return CallMapper.toResponse(call);
+  }
+
+  async inviteToCall(callId: string, inviterId: string, inviteeIds: string[]) {
+    const call = await this.getOrFail(callId);
+
+    if (
+      call.status !== CallStatus.ACCEPTED &&
+      call.status !== CallStatus.RINGING
+    ) {
+      throw new BadRequestException('Call is not active');
+    }
+
+    const inviterInCall =
+      call.callerId === inviterId ||
+      call.activeParticipants.includes(inviterId);
+    if (!inviterInCall) {
+      throw new BadRequestException('Inviter is not in the call');
+    }
+
+    const newInvitees: string[] = [];
+    for (const inviteeId of inviteeIds) {
+      if (inviteeId === inviterId) continue;
+      if (inviteeId === call.callerId) continue;
+      if (call.participants.includes(inviteeId)) continue;
+
+      const busy = await this.repo.findActiveCall(inviteeId);
+      if (busy)
+        throw new BadRequestException(`User ${inviteeId} already in call`);
+
+      call.participants.push(inviteeId);
+      newInvitees.push(inviteeId);
+    }
+
+    if (newInvitees.length === 0) {
+      return CallMapper.toResponse(call);
+    }
+
+    await this.repo.save(call);
+
+    newInvitees.forEach((userId) => {
+      this.gateway.sendIncomingCall(userId, call);
+    });
+
+    this.eventService.emit('call.invited', call);
+
     return CallMapper.toResponse(call);
   }
 

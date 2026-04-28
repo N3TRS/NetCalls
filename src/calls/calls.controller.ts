@@ -2,8 +2,8 @@ import { Controller, Post, Body, Param, Get, UseGuards } from '@nestjs/common';
 import { CallService } from './calls.service';
 import { CreateCallDto } from './dto/create-call.dto';
 import { CallActionDto } from './dto/call-action.dto';
+import { InviteCallDto } from './dto/invite-call.dto';
 import { JwtAuthGuard } from 'src/auth-integration/guards/jwt-auth.guard';
-
 
 @UseGuards(JwtAuthGuard)
 @Controller('calls')
@@ -38,6 +38,11 @@ export class CallController {
   @Post(':id/join')
   joinCall(@Param('id') id: string, @Body() data: CallActionDto) {
     return this.service.joinCall(id, data.userId);
+  }
+
+  @Post(':id/invite')
+  inviteToCall(@Param('id') id: string, @Body() data: InviteCallDto) {
+    return this.service.inviteToCall(id, data.inviterId, data.inviteeIds);
   }
 
   @Get(':id')

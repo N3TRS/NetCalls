@@ -1,6 +1,11 @@
 import {
-  WebSocketGateway, WebSocketServer, SubscribeMessage, ConnectedSocket,
-  MessageBody, OnGatewayConnection, OnGatewayDisconnect,
+  WebSocketGateway,
+  WebSocketServer,
+  SubscribeMessage,
+  ConnectedSocket,
+  MessageBody,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Call } from '../entities/call.entity';
@@ -76,7 +81,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const oldSocketId = this.users.get(userId);
     if (oldSocketId) {
-      this.logger.log(`User ${userId} was already registered with socket ${oldSocketId}, updating to ${client.id}`);
+      this.logger.log(
+        `User ${userId} was already registered with socket ${oldSocketId}, updating to ${client.id}`,
+      );
       this.sockets.delete(oldSocketId);
     }
 
@@ -90,7 +97,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // Notify late joiners about any ongoing call they are not part of
     this.repo.findAll().then((calls) => {
       const activeCall = calls.find(
-        (c) => c.status === CallStatus.ACCEPTED && !c.activeParticipants.includes(userId),
+        (c) =>
+          c.status === CallStatus.ACCEPTED &&
+          !c.activeParticipants.includes(userId),
       );
       if (activeCall) {
         client.emit('call-in-progress', activeCall);
@@ -143,7 +152,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('webrtc:offer')
-  handleWebRTCOffer(@MessageBody() data: WebRTCSignal, @ConnectedSocket() client: Socket,) {
+  handleWebRTCOffer(
+    @MessageBody() data: WebRTCSignal,
+    @ConnectedSocket() client: Socket,
+  ) {
     const { to, signal } = data;
     const from = this.sockets.get(client.id);
 
@@ -162,7 +174,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('webrtc:answer')
-  handleWebRTCAnswer(@MessageBody() data: WebRTCSignal, @ConnectedSocket() client: Socket,) {
+  handleWebRTCAnswer(
+    @MessageBody() data: WebRTCSignal,
+    @ConnectedSocket() client: Socket,
+  ) {
     const { to, signal } = data;
     const from = this.sockets.get(client.id);
 
@@ -218,10 +233,14 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (socketId) {
       this.logger.log(`Found socket ${socketId} for user ${userId}`);
       this.server.to(socketId).emit('incoming-call', data);
-      this.logger.log(`Incoming call event emitted to user ${userId} (socket: ${socketId})`);
+      this.logger.log(
+        `Incoming call event emitted to user ${userId} (socket: ${socketId})`,
+      );
       this.logger.log(`Call data:`, data);
     } else {
-      this.logger.warn(`User ${userId} not connected, cannot send incoming call`);
+      this.logger.warn(
+        `User ${userId} not connected, cannot send incoming call`,
+      );
       this.logger.warn(`Available users:`, Array.from(this.users.keys()));
     }
   }
@@ -275,17 +294,24 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   sendUserLeft(userId: string, data: Call, leavingUserId: string) {
     const socketId = this.users.get(userId);
     if (socketId) {
-      this.server.to(socketId).emit('user-left', { call: data, userId: leavingUserId });
-      this.logger.log(`user-left notification sent to ${userId} (left: ${leavingUserId})`);
+      this.server
+        .to(socketId)
+        .emit('user-left', { call: data, userId: leavingUserId });
+      this.logger.log(
+        `user-left notification sent to ${userId} (left: ${leavingUserId})`,
+      );
     }
   }
 
   sendUserJoined(userId: string, data: Call, joiningUserId: string) {
     const socketId = this.users.get(userId);
     if (socketId) {
-      this.server.to(socketId).emit('user-joined', { call: data, userId: joiningUserId });
-      this.logger.log(`user-joined notification sent to ${userId} (joined: ${joiningUserId})`);
+      this.server
+        .to(socketId)
+        .emit('user-joined', { call: data, userId: joiningUserId });
+      this.logger.log(
+        `user-joined notification sent to ${userId} (joined: ${joiningUserId})`,
+      );
     }
   }
-
 }

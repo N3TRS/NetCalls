@@ -1,4 +1,3 @@
-
 import { Call } from '../calls/entities/call.entity';
 
 export interface RegisterPayload {
@@ -70,7 +69,6 @@ export interface WebRTCIceCandidateEvent {
   };
 }
 
-
 export interface RegisterResponse {
   success: boolean;
   userId?: string;
@@ -102,7 +100,6 @@ export interface PingResponse {
   timestamp: number;
   userId?: string;
 }
-
 
 export type ServerToClientEvents =
   | IncomingCallEvent
