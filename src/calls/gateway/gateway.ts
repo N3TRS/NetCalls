@@ -16,7 +16,6 @@ interface WebRTCSignal {
   path: '/calls/socket.io',
   cors: { origin: '*' },
   transports: ['websocket', 'polling'],
-  path: '/calls/socket.io',
 })
 export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
