@@ -5,6 +5,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { Call } from '../entities/call.entity';
 import { Logger } from '@nestjs/common';
+import { CallRepository } from '../calls.repository';
 
 interface WebRTCSignal {
   from: string;
@@ -26,6 +27,8 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private sockets = new Map<string, string>();
   private callRooms = new Map<string, Set<string>>();
 
+  constructor(private readonly repo: CallRepository) {}
+
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
   }
@@ -43,6 +46,12 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
           if (users.size === 0) {
             this.callRooms.delete(callId);
           }
+        }
+      });
+
+      this.repo.forceEndUserCalls(userId).then((count) => {
+        if (count > 0) {
+          this.logger.log(`Force-ended ${count} active call(s) for disconnected user ${userId}`);
         }
       });
     }
