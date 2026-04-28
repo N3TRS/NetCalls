@@ -7,6 +7,7 @@ export class CallMapper {
       callId: call.id,
       callerId: call.callerId,
       participants: call.participants,
+      activeParticipants: call.activeParticipants,
       acceptedUsers: call.acceptedUsers,
       rejectedUsers: call.rejectedUsers,
       status: call.status,

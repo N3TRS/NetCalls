@@ -30,6 +30,16 @@ export class CallController {
     return this.service.endCall(id);
   }
 
+  @Post(':id/leave')
+  leaveCall(@Param('id') id: string, @Body() data: CallActionDto) {
+    return this.service.leaveCall(id, data.userId);
+  }
+
+  @Post(':id/join')
+  joinCall(@Param('id') id: string, @Body() data: CallActionDto) {
+    return this.service.joinCall(id, data.userId);
+  }
+
   @Get(':id')
   getCall(@Param('id') id: string) {
     return this.service.getCallResponse(id);
