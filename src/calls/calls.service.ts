@@ -4,6 +4,7 @@ import { Call } from './entities/call.entity';
 import { CallStatus } from './enum/callStatusEnum';
 import { CallGateway } from './gateway/gateway';
 import { CallMapper } from './mappers/call.mapper';
+import { MediasoupService } from './mediasoup/mediasoup.service';
 import {
   Injectable,
   BadRequestException,
@@ -20,6 +21,7 @@ export class CallService {
     private eventService: EventService,
     @Inject(forwardRef(() => CallGateway))
     private gateway: CallGateway,
+    private mediasoupService: MediasoupService,
   ) {}
 
   async createCall(callerId: string, participants: string[]) {
@@ -158,6 +160,9 @@ export class CallService {
     this.notifyAll(call, 'ended');
     this.eventService.emit('call.ended', call);
 
+    // Clean up SFU room — all clients will resetCall() on call-ended
+    this.mediasoupService.closeRoom(callId);
+
     return CallMapper.toResponse(call);
   }
 
@@ -202,6 +207,17 @@ export class CallService {
 
     if (!call.activeParticipants.includes(userId)) {
       return CallMapper.toResponse(call);
+    }
+
+    // Close SFU resources and notify call room of each closed producer
+    const closedProducerIds = this.mediasoupService.closeUserResources(
+      callId,
+      userId,
+    );
+    for (const producerId of closedProducerIds) {
+      this.gateway.broadcastToCall(callId, 'ms:producer-closed', {
+        producerId,
+      });
     }
 
     call.activeParticipants = call.activeParticipants.filter(
