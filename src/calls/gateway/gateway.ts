@@ -232,8 +232,8 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('ms:get-producers')
-  handleGetProducers(@MessageBody() data: { callId: string }) {
-    return { producers: this.mediasoupService.getProducers(data.callId) };
+  async handleGetProducers(@MessageBody() data: { callId: string }) {
+    return { producers: await this.mediasoupService.getProducers(data.callId) };
   }
 
   @SubscribeMessage('ms:consume')

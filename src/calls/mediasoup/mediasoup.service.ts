@@ -1,283 +1,109 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleDestroy,
-  OnModuleInit,
-} from '@nestjs/common';
-import * as mediasoup from 'mediasoup';
-
-type Worker = mediasoup.types.Worker;
-type Router = mediasoup.types.Router;
-type WebRtcTransport = mediasoup.types.WebRtcTransport;
-type Producer = mediasoup.types.Producer;
-type Consumer = mediasoup.types.Consumer;
-type RtpCapabilities = mediasoup.types.RtpCapabilities;
-type DtlsParameters = mediasoup.types.DtlsParameters;
-type MediaKind = mediasoup.types.MediaKind;
-type RtpParameters = mediasoup.types.RtpParameters;
-
-interface ProducerInfo {
-  userId: string;
-  producer: Producer;
-  kind: 'audio' | 'video';
-}
-
-interface TransportInfo {
-  transport: WebRtcTransport;
-  userId: string;
-}
-
-interface RoomData {
-  router: Router;
-  producers: Map<string, ProducerInfo>;
-  transports: Map<string, TransportInfo>;
-  consumers: Map<string, Consumer>;
-}
+import { Injectable, Logger } from '@nestjs/common';
 
 @Injectable()
-export class MediasoupService implements OnModuleInit, OnModuleDestroy {
-  private worker!: Worker;
-  private rooms = new Map<string, RoomData>();
+export class MediasoupService {
   private readonly logger = new Logger(MediasoupService.name);
+  private readonly baseUrl =
+    process.env.MEDIASOUP_SERVER_URL ?? 'http://localhost:3001';
 
-  private readonly mediaCodecs: mediasoup.types.RtpCodecCapability[] = [
-    {
-      kind: 'audio',
-      mimeType: 'audio/opus',
-      preferredPayloadType: 100,
-      clockRate: 48000,
-      channels: 2,
-    },
-    {
-      kind: 'video',
-      mimeType: 'video/VP8',
-      preferredPayloadType: 101,
-      clockRate: 90000,
-      parameters: { 'x-google-start-bitrate': 1000 },
-    },
-    {
-      kind: 'video',
-      mimeType: 'video/H264',
-      preferredPayloadType: 102,
-      clockRate: 90000,
-      parameters: {
-        'packetization-mode': 1,
-        'profile-level-id': '4d0032',
-        'level-asymmetry-allowed': 1,
-      },
-    },
-  ];
-
-  async onModuleInit(): Promise<void> {
-    await this.startWorker();
-  }
-
-  private async startWorker(): Promise<void> {
-    this.worker = await mediasoup.createWorker({
-      logLevel: 'warn',
-      rtcMinPort: parseInt(process.env.MEDIASOUP_RTC_MIN_PORT ?? '40000'),
-      rtcMaxPort: parseInt(process.env.MEDIASOUP_RTC_MAX_PORT ?? '49999'),
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     });
 
-    this.worker.on('died', async () => {
-      this.logger.error('MediaSoup worker died — restarting');
-      await this.startWorker();
-    });
-
-    this.logger.log('MediaSoup worker started');
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    this.worker?.close();
-  }
-
-  async ensureRoom(callId: string): Promise<RoomData> {
-    if (!this.rooms.has(callId)) {
-      const router = await this.worker.createRouter({
-        mediaCodecs: this.mediaCodecs,
-      });
-      this.rooms.set(callId, {
-        router,
-        producers: new Map(),
-        transports: new Map(),
-        consumers: new Map(),
-      });
-      this.logger.log(`Room created for call ${callId}`);
+    const data = (await res.json()) as any;
+    if (!res.ok) {
+      throw new Error(data.error ?? `mediasoup-server error ${res.status}`);
     }
-    return this.rooms.get(callId)!;
+    return data as T;
   }
 
-  getRouterRtpCapabilities(callId: string): RtpCapabilities {
-    const room = this.rooms.get(callId);
-    if (!room) throw new Error(`Room not found: ${callId}`);
-    return room.router.rtpCapabilities;
+  async ensureRoom(callId: string): Promise<void> {
+    await this.request('POST', `/rooms/${callId}`);
   }
 
-  async createTransport(
-    callId: string,
-    userId: string,
-  ): Promise<{
-    id: string;
-    iceParameters: mediasoup.types.IceParameters;
-    iceCandidates: mediasoup.types.IceCandidate[];
-    dtlsParameters: DtlsParameters;
-  }> {
-    const room = this.rooms.get(callId);
-    if (!room) throw new Error(`Room not found: ${callId}`);
+  async getRouterRtpCapabilities(callId: string): Promise<any> {
+    return this.request('GET', `/rooms/${callId}/rtp-capabilities`);
+  }
 
-    const announcedIp = process.env.MEDIASOUP_ANNOUNCED_IP ?? '127.0.0.1';
-
-    const transport = await room.router.createWebRtcTransport({
-      listenIps: [{ ip: '0.0.0.0', announcedIp }],
-      enableUdp: true,
-      enableTcp: true,
-      preferUdp: true,
-      initialAvailableOutgoingBitrate: 600_000,
-    });
-
-    room.transports.set(transport.id, { transport, userId });
-    this.logger.log(`Transport ${transport.id} for user ${userId}`);
-
-    return {
-      id: transport.id,
-      iceParameters: transport.iceParameters,
-      iceCandidates: transport.iceCandidates,
-      dtlsParameters: transport.dtlsParameters,
-    };
+  async createTransport(callId: string, userId: string): Promise<any> {
+    return this.request('POST', `/rooms/${callId}/transports`, { userId });
   }
 
   async connectTransport(
     callId: string,
     transportId: string,
-    dtlsParameters: DtlsParameters,
+    dtlsParameters: any,
   ): Promise<void> {
-    const room = this.rooms.get(callId);
-    if (!room) throw new Error(`Room not found: ${callId}`);
-    const info = room.transports.get(transportId);
-    if (!info) throw new Error(`Transport ${transportId} not found`);
-    await info.transport.connect({ dtlsParameters });
+    await this.request(
+      'POST',
+      `/rooms/${callId}/transports/${transportId}/connect`,
+      { dtlsParameters },
+    );
   }
 
   async produce(
     callId: string,
     transportId: string,
     userId: string,
-    kind: MediaKind,
-    rtpParameters: RtpParameters,
+    kind: string,
+    rtpParameters: any,
   ): Promise<string> {
-    const room = this.rooms.get(callId);
-    if (!room) throw new Error(`Room not found: ${callId}`);
-    const info = room.transports.get(transportId);
-    if (!info) throw new Error(`Transport ${transportId} not found`);
-
-    const producer = await info.transport.produce({ kind, rtpParameters });
-    room.producers.set(producer.id, {
-      userId,
-      producer,
-      kind: kind as 'audio' | 'video',
-    });
-
-    producer.on('transportclose', () => {
-      room.producers.delete(producer.id);
-    });
-
-    this.logger.log(`Producer ${producer.id} (${kind}) for user ${userId}`);
-    return producer.id;
+    const { producerId } = await this.request<{ producerId: string }>(
+      'POST',
+      `/rooms/${callId}/transports/${transportId}/produce`,
+      { userId, kind, rtpParameters },
+    );
+    return producerId;
   }
 
   async consume(
     callId: string,
     transportId: string,
     producerId: string,
-    rtpCapabilities: RtpCapabilities,
-  ): Promise<{
-    id: string;
-    producerId: string;
-    kind: MediaKind;
-    rtpParameters: RtpParameters;
-  }> {
-    const room = this.rooms.get(callId);
-    if (!room) throw new Error(`Room not found: ${callId}`);
-    const transportInfo = room.transports.get(transportId);
-    if (!transportInfo) throw new Error(`Transport ${transportId} not found`);
-
-    if (!room.router.canConsume({ producerId, rtpCapabilities })) {
-      throw new Error(`Cannot consume producer ${producerId}`);
-    }
-
-    const consumer = await transportInfo.transport.consume({
+    rtpCapabilities: any,
+  ): Promise<any> {
+    return this.request('POST', `/rooms/${callId}/consume`, {
+      transportId,
       producerId,
       rtpCapabilities,
-      paused: true,
     });
-
-    room.consumers.set(consumer.id, consumer);
-    this.logger.log(`Consumer ${consumer.id} for producer ${producerId}`);
-
-    return {
-      id: consumer.id,
-      producerId,
-      kind: consumer.kind,
-      rtpParameters: consumer.rtpParameters,
-    };
   }
 
   async resumeConsumer(callId: string, consumerId: string): Promise<void> {
-    const room = this.rooms.get(callId);
-    if (!room) return;
-    const consumer = room.consumers.get(consumerId);
-    if (consumer && !consumer.closed) await consumer.resume();
+    await this.request(
+      'POST',
+      `/rooms/${callId}/consumers/${consumerId}/resume`,
+    );
   }
 
-  getProducers(
+  async getProducers(
     callId: string,
-  ): { userId: string; producerId: string; kind: string }[] {
-    const room = this.rooms.get(callId);
-    if (!room) return [];
-    return Array.from(room.producers.entries()).map(([id, info]) => ({
-      userId: info.userId,
-      producerId: id,
-      kind: info.kind,
-    }));
+  ): Promise<{ userId: string; producerId: string; kind: string }[]> {
+    const result = await this.request<{ producers: any[] }>(
+      'GET',
+      `/rooms/${callId}/producers`,
+    ).catch(() => ({ producers: [] }));
+    return result.producers;
   }
 
-  // Closes all producers/transports for a user and returns the closed producer IDs
-  // so they can be broadcast to the call room.
-  closeUserResources(callId: string, userId: string): string[] {
-    const room = this.rooms.get(callId);
-    if (!room) return [];
-
-    const closedIds: string[] = [];
-
-    for (const [id, info] of room.producers.entries()) {
-      if (info.userId === userId) {
-        if (!info.producer.closed) info.producer.close();
-        room.producers.delete(id);
-        closedIds.push(id);
-      }
-    }
-
-    for (const [id, info] of room.transports.entries()) {
-      if (info.userId === userId) {
-        if (!info.transport.closed) info.transport.close();
-        room.transports.delete(id);
-      }
-    }
-
-    if (closedIds.length > 0) {
-      this.logger.log(
-        `Closed mediasoup resources for user ${userId} in call ${callId}: [${closedIds.join(', ')}]`,
-      );
-    }
-    return closedIds;
+  async closeUserResources(callId: string, userId: string): Promise<string[]> {
+    const result = await this.request<{ closedProducerIds: string[] }>(
+      'DELETE',
+      `/rooms/${callId}/users/${userId}`,
+    ).catch(() => ({ closedProducerIds: [] }));
+    return result.closedProducerIds;
   }
 
   closeRoom(callId: string): void {
-    const room = this.rooms.get(callId);
-    if (room) {
-      if (!room.router.closed) room.router.close();
-      this.rooms.delete(callId);
-      this.logger.log(`Room closed for call ${callId}`);
-    }
+    this.request('DELETE', `/rooms/${callId}`).catch((err) =>
+      this.logger.warn(`closeRoom failed: ${err.message}`),
+    );
   }
 }
