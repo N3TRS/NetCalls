@@ -142,9 +142,7 @@ export class CallService {
   async endCall(callId: string) {
     const call = await this.getOrFail(callId);
 
-    // Allow ending calls that are RINGING or ACCEPTED
-    // RINGING: caller hangs up before anyone accepts
-    // ACCEPTED: normal call end
+
     if (
       call.status !== CallStatus.ACCEPTED &&
       call.status !== CallStatus.RINGING
@@ -160,7 +158,7 @@ export class CallService {
     this.notifyAll(call, 'ended');
     this.eventService.emit('call.ended', call);
 
-    // Clean up SFU room — all clients will resetCall() on call-ended
+    // Clean up SFU room 
     this.mediasoupService.closeRoom(callId);
 
     return CallMapper.toResponse(call);
@@ -209,8 +207,8 @@ export class CallService {
       return CallMapper.toResponse(call);
     }
 
-    // Close SFU resources and notify call room of each closed producer
-    const closedProducerIds = this.mediasoupService.closeUserResources(
+    // Close SFU
+    const closedProducerIds = await this.mediasoupService.closeUserResources(
       callId,
       userId,
     );
