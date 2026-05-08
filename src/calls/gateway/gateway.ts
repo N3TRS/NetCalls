@@ -12,13 +12,8 @@ import { Call } from '../entities/call.entity';
 import { forwardRef, Inject, Logger } from '@nestjs/common';
 import { CallRepository } from '../calls.repository';
 import { CallService } from '../calls.service';
+import { MediasoupService } from '../mediasoup/mediasoup.service';
 import { CallStatus } from '../enum/callStatusEnum';
-
-interface WebRTCSignal {
-  from: string;
-  to: string;
-  signal: any;
-}
 
 @WebSocketGateway({
   path: '/calls/socket.io',
@@ -38,6 +33,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly repo: CallRepository,
     @Inject(forwardRef(() => CallService))
     private readonly callService: CallService,
+    private readonly mediasoupService: MediasoupService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -151,79 +147,133 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return { success: true, callId, userId };
   }
 
-  @SubscribeMessage('webrtc:offer')
-  handleWebRTCOffer(
-    @MessageBody() data: WebRTCSignal,
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { to, signal } = data;
-    const from = this.sockets.get(client.id);
-
-    if (!from) {
-      this.logger.warn(`Offer from unregistered socket: ${client.id}`);
-      return { success: false, error: 'Not registered' };
-    }
-
-    const targetSocketId = this.users.get(to);
-    if (targetSocketId) {
-      this.server.to(targetSocketId).emit('webrtc:offer', { from, signal });
-      this.logger.log(`WebRTC offer sent from ${from} to ${to}`);
-    }
-
-    return { success: true };
-  }
-
-  @SubscribeMessage('webrtc:answer')
-  handleWebRTCAnswer(
-    @MessageBody() data: WebRTCSignal,
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { to, signal } = data;
-    const from = this.sockets.get(client.id);
-
-    if (!from) {
-      this.logger.warn(`Answer from unregistered socket: ${client.id}`);
-      return { success: false, error: 'Not registered' };
-    }
-
-    const targetSocketId = this.users.get(to);
-    if (targetSocketId) {
-      this.server.to(targetSocketId).emit('webrtc:answer', { from, signal });
-      this.logger.log(`WebRTC answer sent from ${from} to ${to}`);
-    }
-
-    return { success: true };
-  }
-
-  @SubscribeMessage('webrtc:ice-candidate')
-  handleICECandidate(
-    @MessageBody() data: WebRTCSignal,
-    @ConnectedSocket() client: Socket,
-  ) {
-    const { to, signal } = data;
-    const from = this.sockets.get(client.id);
-
-    if (!from) {
-      this.logger.warn(`ICE candidate from unregistered socket: ${client.id}`);
-      return { success: false, error: 'Not registered' };
-    }
-
-    const targetSocketId = this.users.get(to);
-    if (targetSocketId) {
-      this.server
-        .to(targetSocketId)
-        .emit('webrtc:ice-candidate', { from, signal });
-      this.logger.log(`ICE candidate sent from ${from} to ${to}`);
-    }
-
-    return { success: true };
-  }
-
   @SubscribeMessage('ping')
   handlePing(@ConnectedSocket() client: Socket) {
     const userId = this.sockets.get(client.id);
     return { pong: true, timestamp: Date.now(), userId };
   }
+
+  // MediaSoup SFU signaling
+
+  @SubscribeMessage('ms:get-rtp-capabilities')
+  async handleGetRtpCapabilities(
+    @MessageBody() data: { callId: string },
+  ) {
+    try {
+      await this.mediasoupService.ensureRoom(data.callId);
+      return this.mediasoupService.getRouterRtpCapabilities(data.callId);
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  }
+
+  @SubscribeMessage('ms:create-transport')
+  async handleCreateTransport(
+    @MessageBody() data: { callId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const userId = this.sockets.get(client.id);
+    if (!userId) return { error: 'Not registered' };
+    try {
+      return await this.mediasoupService.createTransport(data.callId, userId);
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  }
+
+  @SubscribeMessage('ms:connect-transport')
+  async handleConnectTransport(
+    @MessageBody()
+    data: { callId: string; transportId: string; dtlsParameters: any },
+  ) {
+    try {
+      await this.mediasoupService.connectTransport(
+        data.callId,
+        data.transportId,
+        data.dtlsParameters,
+      );
+      return { success: true };
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  }
+
+  @SubscribeMessage('ms:produce')
+  async handleProduce(
+    @MessageBody()
+    data: {
+      callId: string;
+      transportId: string;
+      kind: string;
+      rtpParameters: any;
+    },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const userId = this.sockets.get(client.id);
+    if (!userId) return { error: 'Not registered' };
+    try {
+      const producerId = await this.mediasoupService.produce(
+        data.callId,
+        data.transportId,
+        userId,
+        data.kind as any,
+        data.rtpParameters,
+      );
+      // Notify everyone else in the call room about the new producer
+      client.to(`call:${data.callId}`).emit('ms:new-producer', {
+        userId,
+        producerId,
+        kind: data.kind,
+      });
+      return { producerId };
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  }
+
+  @SubscribeMessage('ms:get-producers')
+  handleGetProducers(@MessageBody() data: { callId: string }) {
+    return { producers: this.mediasoupService.getProducers(data.callId) };
+  }
+
+  @SubscribeMessage('ms:consume')
+  async handleConsume(
+    @MessageBody()
+    data: {
+      callId: string;
+      transportId: string;
+      producerId: string;
+      rtpCapabilities: any;
+    },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const userId = this.sockets.get(client.id);
+    if (!userId) return { error: 'Not registered' };
+    try {
+      return await this.mediasoupService.consume(
+        data.callId,
+        data.transportId,
+        data.producerId,
+        data.rtpCapabilities,
+      );
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  }
+
+  @SubscribeMessage('ms:resume-consumer')
+  async handleResumeConsumer(
+    @MessageBody() data: { callId: string; consumerId: string },
+  ) {
+    try {
+      await this.mediasoupService.resumeConsumer(data.callId, data.consumerId);
+      return { success: true };
+    } catch (e: any) {
+      return { error: e.message };
+    }
+  }
+
+  // MediaSoup SFU signaling
 
   sendIncomingCall(userId: string, data: Call) {
     this.logger.log(`Attempting to send incoming call to user ${userId}`);

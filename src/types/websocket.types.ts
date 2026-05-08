@@ -14,12 +14,6 @@ export interface LeaveCallPayload {
   userId: string;
 }
 
-export interface WebRTCSignalPayload {
-  from?: string;
-  to: string;
-  signal: RTCSessionDescriptionInit | RTCIceCandidateInit;
-}
-
 export interface IncomingCallEvent {
   event: 'incoming-call';
   data: Call;
@@ -45,30 +39,6 @@ export interface CallMissedEvent {
   data: Call;
 }
 
-export interface WebRTCOfferEvent {
-  event: 'webrtc:offer';
-  data: {
-    from: string;
-    signal: RTCSessionDescriptionInit;
-  };
-}
-
-export interface WebRTCAnswerEvent {
-  event: 'webrtc:answer';
-  data: {
-    from: string;
-    signal: RTCSessionDescriptionInit;
-  };
-}
-
-export interface WebRTCIceCandidateEvent {
-  event: 'webrtc:ice-candidate';
-  data: {
-    from: string;
-    signal: RTCIceCandidateInit;
-  };
-}
-
 export interface RegisterResponse {
   success: boolean;
   userId?: string;
@@ -90,11 +60,6 @@ export interface LeaveCallResponse {
   error?: string;
 }
 
-export interface WebRTCResponse {
-  success: boolean;
-  error?: string;
-}
-
 export interface PingResponse {
   pong: boolean;
   timestamp: number;
@@ -106,16 +71,17 @@ export type ServerToClientEvents =
   | CallAcceptedEvent
   | CallRejectedEvent
   | CallEndedEvent
-  | CallMissedEvent
-  | WebRTCOfferEvent
-  | WebRTCAnswerEvent
-  | WebRTCIceCandidateEvent;
+  | CallMissedEvent;
 
 export type ClientToServerEvents =
   | 'register'
   | 'join-call'
   | 'leave-call'
-  | 'webrtc:offer'
-  | 'webrtc:answer'
-  | 'webrtc:ice-candidate'
-  | 'ping';
+  | 'ping'
+  | 'ms:get-rtp-capabilities'
+  | 'ms:create-transport'
+  | 'ms:connect-transport'
+  | 'ms:produce'
+  | 'ms:get-producers'
+  | 'ms:consume'
+  | 'ms:resume-consumer';

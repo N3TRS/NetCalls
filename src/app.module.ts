@@ -5,6 +5,7 @@ import { CallRepository } from './calls/calls.repository';
 import { CallService } from './calls/calls.service';
 import { EventService } from './events/event.service';
 import { CallGateway } from './calls/gateway/gateway';
+import { MediasoupService } from './calls/mediasoup/mediasoup.service';
 import { ConfigModule } from '@nestjs/config';
 import { MetricsController } from './metrics/metrics.controller';
 import { MetricsService } from './metrics/metrics.service';
@@ -19,6 +20,7 @@ import { AuthIntegrationModule } from './auth-integration/auth-integration.modul
     CallRepository,
     EventService,
     CallGateway,
+    MediasoupService,
     MetricsService,
     {
       provide: APP_INTERCEPTOR,
