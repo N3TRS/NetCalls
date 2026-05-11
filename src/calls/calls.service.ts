@@ -223,7 +223,7 @@ export class CallService {
     );
     await this.repo.save(call);
 
-    if (call.activeParticipants.length <= 1) {
+    if (userId === call.callerId) {
       return this.endCall(callId);
     }
 
