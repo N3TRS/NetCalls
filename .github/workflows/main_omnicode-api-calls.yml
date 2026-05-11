@@ -29,10 +29,9 @@ jobs:
           npm run build
           npm run test:cov -- --passWithNoTests
 
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@383f7e554c7d1ab8af9b6f5c9d3a997b1f0b2d3a
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Upload artifact for deployment job
