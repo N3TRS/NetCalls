@@ -156,6 +156,44 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return { pong: true, timestamp: Date.now(), userId };
   }
 
+  // WebRTC P2P signaling relay
+
+  @SubscribeMessage('webrtc:offer')
+  handleWebRTCOffer(
+    @MessageBody() data: { to: string; signal: RTCSessionDescriptionInit },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const fromUserId = this.sockets.get(client.id);
+    const toSocketId = this.users.get(data.to);
+    if (toSocketId) {
+      this.server.to(toSocketId).emit('webrtc:offer', { from: fromUserId, signal: data.signal });
+    }
+  }
+
+  @SubscribeMessage('webrtc:answer')
+  handleWebRTCAnswer(
+    @MessageBody() data: { to: string; signal: RTCSessionDescriptionInit },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const fromUserId = this.sockets.get(client.id);
+    const toSocketId = this.users.get(data.to);
+    if (toSocketId) {
+      this.server.to(toSocketId).emit('webrtc:answer', { from: fromUserId, signal: data.signal });
+    }
+  }
+
+  @SubscribeMessage('webrtc:ice-candidate')
+  handleWebRTCIceCandidate(
+    @MessageBody() data: { to: string; signal: RTCIceCandidateInit },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const fromUserId = this.sockets.get(client.id);
+    const toSocketId = this.users.get(data.to);
+    if (toSocketId) {
+      this.server.to(toSocketId).emit('webrtc:ice-candidate', { from: fromUserId, signal: data.signal });
+    }
+  }
+
   // MediaSoup SFU signaling
 
   @SubscribeMessage('ms:get-rtp-capabilities')
