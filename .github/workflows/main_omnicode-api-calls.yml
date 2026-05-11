@@ -30,7 +30,7 @@ jobs:
           npm run test:cov -- --passWithNoTests
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@v3.1.0
+        uses: SonarSource/sonarcloud-github-action@e44258f34a8e6a8e87d0f857f5f0d5a4b6f7e8e4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
