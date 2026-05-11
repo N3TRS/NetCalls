@@ -106,7 +106,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('join-call')
-  handleJoinCall(
+  async handleJoinCall(
     @MessageBody() data: { callId: string; userId: string },
     @ConnectedSocket() client: Socket,
   ) {
@@ -123,7 +123,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.join(`call:${callId}`);
 
     this.logger.log(`User ${userId} joined call ${callId}`);
-    return { success: true, callId, userId };
+
+    // Send existing producers so the joining client can consume them immediately
+    const producers = await this.mediasoupService.getProducers(callId);
+    return { success: true, callId, userId, producers };
   }
 
   @SubscribeMessage('leave-call')
@@ -175,6 +178,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId = this.sockets.get(client.id);
     if (!userId) return { error: 'Not registered' };
     try {
+      await this.mediasoupService.ensureRoom(data.callId);
       return await this.mediasoupService.createTransport(data.callId, userId);
     } catch (e: any) {
       return { error: e.message };
@@ -249,14 +253,18 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const userId = this.sockets.get(client.id);
     if (!userId) return { error: 'Not registered' };
+    this.logger.log(`[DEBUG] ms:consume — user=${userId} producer=${data.producerId} transport=${data.transportId}`);
     try {
-      return await this.mediasoupService.consume(
+      const result = await this.mediasoupService.consume(
         data.callId,
         data.transportId,
         data.producerId,
         data.rtpCapabilities,
       );
+      this.logger.log(`[DEBUG] ms:consume OK — consumerId=${result.id} kind=${result.kind}`);
+      return result;
     } catch (e: any) {
+      this.logger.error(`[DEBUG] ms:consume FAILED — ${e.message}`);
       return { error: e.message };
     }
   }
@@ -265,6 +273,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleResumeConsumer(
     @MessageBody() data: { callId: string; consumerId: string },
   ) {
+    this.logger.log(`[DEBUG] ms:resume-consumer called — callId=${data.callId} consumerId=${data.consumerId}`);
     try {
       await this.mediasoupService.resumeConsumer(data.callId, data.consumerId);
       return { success: true };
