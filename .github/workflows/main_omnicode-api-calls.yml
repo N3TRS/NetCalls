@@ -27,7 +27,13 @@ jobs:
         run: |
           npm install
           npm run build
-          npm run test -- --passWithNoTests
+          npm run test:cov -- --passWithNoTests
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
