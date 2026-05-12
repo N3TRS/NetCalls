@@ -307,6 +307,17 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @SubscribeMessage('user:mute-changed')
+  handleMuteChanged(
+    @MessageBody() data: { callId: string; userId: string; isMuted: boolean },
+    @ConnectedSocket() client: Socket,
+  ) {
+    client.to(`call:${data.callId}`).emit('user:mute-changed', {
+      userId: data.userId,
+      isMuted: data.isMuted,
+    });
+  }
+
   @SubscribeMessage('ms:resume-consumer')
   async handleResumeConsumer(
     @MessageBody() data: { callId: string; consumerId: string },
