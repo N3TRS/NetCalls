@@ -457,4 +457,38 @@ describe('CallService', () => {
       expect(result).toBe(calls);
     });
   });
+
+  // ─── getCallResponse ──────────────────────────────────────────────────────
+
+  describe('getCallResponse', () => {
+    it('returns mapped response for existing call', async () => {
+      const call = makeCall({ status: CallStatus.ACCEPTED });
+      repo.findById.mockResolvedValue(call);
+
+      const result = await service.getCallResponse('call-1');
+
+      expect(result.callId).toBe('call-1');
+      expect(result.status).toBe(CallStatus.ACCEPTED);
+    });
+
+    it('throws NotFoundException when call does not exist', async () => {
+      repo.findById.mockResolvedValue(null);
+      await expect(service.getCallResponse('missing')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ─── leaveCall (broadcastToCall branch) ───────────────────────────────────
+
+  describe('leaveCall broadcastToCall', () => {
+    it('broadcasts closed producer ids when mediasoup returns them', async () => {
+      const call = makeCall({ status: CallStatus.ACCEPTED, activeParticipants: ['caller', 'p1'] });
+      repo.findById.mockResolvedValue(call);
+      mediasoupService.closeUserResources.mockResolvedValue(['prod-1', 'prod-2']);
+
+      await service.leaveCall('call-1', 'p1');
+
+      expect(gateway.broadcastToCall).toHaveBeenCalledWith('call-1', 'ms:producer-closed', { producerId: 'prod-1' });
+      expect(gateway.broadcastToCall).toHaveBeenCalledWith('call-1', 'ms:producer-closed', { producerId: 'prod-2' });
+    });
+  });
 });
