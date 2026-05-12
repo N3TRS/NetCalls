@@ -74,7 +74,6 @@ describe('CallGateway', () => {
     gateway.handleRegister({ userId }, socket);
   };
 
-  // ─── Connection lifecycle ─────────────────────────────────────────────────
 
   describe('handleConnection', () => {
     it('does not throw on new connection', () => {
@@ -120,7 +119,6 @@ describe('CallGateway', () => {
     });
   });
 
-  // ─── handleRegister ───────────────────────────────────────────────────────
 
   describe('handleRegister', () => {
     it('registers user and returns success response', () => {
@@ -160,7 +158,6 @@ describe('CallGateway', () => {
     });
   });
 
-  // ─── handleJoinCall / handleLeaveCall ─────────────────────────────────────
 
   describe('handleJoinCall', () => {
     it('joins socket room and returns producers', async () => {
@@ -192,7 +189,6 @@ describe('CallGateway', () => {
     });
   });
 
-  // ─── handlePing ───────────────────────────────────────────────────────────
 
   describe('handlePing', () => {
     it('returns pong with timestamp', () => {
@@ -203,7 +199,6 @@ describe('CallGateway', () => {
     });
   });
 
-  // ─── MediaSoup SFU signaling ──────────────────────────────────────────────
 
   describe('handleGetRtpCapabilities', () => {
     it('returns rtp capabilities for a call', async () => {
@@ -355,7 +350,6 @@ describe('CallGateway', () => {
     });
   });
 
-  // ─── WebRTC signaling relay ───────────────────────────────────────────────
 
   describe('handleWebRTCOffer', () => {
     it('relays offer to target user socket', () => {
@@ -398,7 +392,6 @@ describe('CallGateway', () => {
     });
   });
 
-  // ─── Notification helpers ─────────────────────────────────────────────────
 
   describe('sendIncomingCall', () => {
     it('emits incoming-call to connected user', () => {
@@ -489,7 +482,6 @@ describe('CallGateway', () => {
     });
   });
 
-  // ─── Utility ──────────────────────────────────────────────────────────────
 
   describe('isUserConnected', () => {
     it('returns true for registered user', () => {

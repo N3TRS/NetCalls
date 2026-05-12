@@ -1,253 +1,364 @@
-# NetCalls Backend
+# NetCalls — Backend de llamadas en tiempo real
 
-Backend API para gestionar llamadas en tiempo real con audio/video entre múltiples usuarios.
+Backend del microservicio **NetCalls**, responsable de gestionar llamadas de voz/video en tiempo real entre múltiples usuarios dentro del ecosistema **OMNICODE**.
 
-Implementado con NestJS + TypeScript, WebSocket (Socket.IO) para comunicación bidireccional, señalización WebRTC para audio/video, y un repositorio en memoria (sin base de datos por ahora).
+Implementado con **NestJS + TypeScript**, expone una API REST protegida por JWT, un gateway WebSocket con **Socket.IO** para notificaciones en tiempo real, señalización **WebRTC** peer-to-peer, y un servidor de medios **Mediasoup SFU** para enrutamiento de audio/video.
 
-## Descripcion
 
-Este servicio permite:
+## Tabla de contenidos
 
-- Crear una llamada grupal entre un `callerId` y múltiples `participants`.
-- Aceptar una llamada en estado `RINGING` o `ACCEPTED` (cada usuario por separado).
-- Rechazar una llamada en estado `RINGING` o `ACCEPTED` (cada usuario por separado).
-- Finalizar una llamada en estado `ACCEPTED`.
-- Consultar una llamada por id.
-- WebSocket real-time para notificar cambios en las llamadas.
+- [Descripción](#descripción)
+- [Stack tecnológico](#stack-tecnológico)
+- [Arquitectura](#arquitectura)
+- [Estructura del proyecto](#estructura-del-proyecto)
+- [Instalación](#instalación)
+- [Ejecución](#ejecución)
+- [API REST](#api-rest)
+- [WebSocket — Eventos de llamada](#websocket--eventos-de-llamada)
+- [WebSocket — Señalización Mediasoup SFU](#websocket--señalización-mediasoup-sfu)
+- [Estados de llamada](#estados-de-llamada)
+- [Testing](#testing)
 
-La aplicacion expone los endpoints bajo el prefijo `calls` y corre por defecto en el puerto `3000`.
+---
 
-Base URL local:
+## Descripción
 
-## Stack
+NetCalls permite:
 
-- Node.js
-- NestJS 11
-- TypeScript
-- Socket.IO (WebSocket real-time)
-- Jest (testing)
-- Prettier (code formatting)
+- Crear llamadas grupales entre un `callerId` y múltiples `participants`.
+- Aceptar o rechazar llamadas individualmente.
+- Finalizar o abandonar una llamada activa.
+- Invitar nuevos usuarios a una llamada en curso.
+- Notificaciones en tiempo real via WebSocket para todos los participantes.
+- Señalización WebRTC para conexiones peer-to-peer.
+- Enrutamiento de media (audio/video) mediante Mediasoup SFU.
+- Timeout automático: si nadie responde en 50 segundos la llamada pasa a `MISSED`.
+- Métricas HTTP expuestas en `/metrics` compatibles con Prometheus.
+
+---
+
+## Stack tecnológico
+
+| Capa | Tecnología |
+|---|---|
+| Runtime | Node.js 20 |
+| Framework | NestJS 11 + TypeScript |
+| WebSocket | Socket.IO |
+| Señalización P2P | WebRTC (offer/answer/ICE) |
+| Media Server | Mediasoup SFU |
+| Autenticación | JWT (Bearer token) |
+| Métricas | prom-client (Prometheus) |
+| Testing | Jest 30 + ts-jest |
+| CI/CD | GitHub Actions → Azure Web App |
+| Análisis de calidad | SonarCloud |
+
+---
+
+## Arquitectura
+
+```
+Cliente A                        Servidor NetCalls                    Cliente B
+   │                                     │                                │
+   │── POST /calls/create ──────────────►│                                │
+   │◄── { callId, status: RINGING } ─────│                                │
+   │                                     │── incoming-call (WS) ─────────►│
+   │                                     │                                │
+   │── WS: join-call ───────────────────►│◄── WS: join-call ──────────────│
+   │                                     │                                │
+   │── WS: ms:get-rtp-capabilities ─────►│                                │
+   │◄── rtpCapabilities ─────────────────│                                │
+   │                                     │                                │
+   │── WS: ms:create-transport ─────────►│                                │
+   │◄── transportParams ─────────────────│                                │
+   │                                     │                                │
+   │── WS: ms:produce ──────────────────►│── ms:new-producer (WS) ───────►│
+   │                                     │                                │
+   │                                     │◄── ms:consume ─────────────────│
+   │                                     │── consumerParams ─────────────►│
+```
+
+---
 
 ## Estructura del proyecto
 
-```txt
+```
 src/
-  app.module.ts           # Módulo principal
-  main.ts                 # Entry point con CORS y validación global
-  calls/
-    calls.controller.ts   # REST endpoints
-    calls.service.ts      # Lógica de negocio con excepciones NestJS
-    calls.repository.ts   # Persistencia en memoria
-    dto/
-      create-call.dto.ts  # DTO con validación class-validator
-      call-action.dto.ts  # DTO para accept/reject
-      call-response.dto.ts
-    entities/
-      call.entity.ts      # Entidad de llamada
-    enum/
-      callStatusEnum.ts   # Estados: RINGING, ACCEPTED, REJECTED, ENDED, MISSED
-    gateway/
-      gateway.ts          # WebSocket gateway con señalización WebRTC
-    mappers/
-      call.mapper.ts      # Transformación Call → DTO
-  events/
-    event.service.ts      # Sistema de eventos de negocio
-  types/
-    websocket.types.ts    # Tipos TypeScript para WebSocket
+├── app.module.ts                  # Módulo raíz
+├── main.ts                        # Bootstrap: CORS, validación global, puerto
+│
+├── auth-integration/
+│   ├── auth-integration.module.ts
+│   └── guards/
+│       └── jwt-auth.guard.ts      # Guard JWT para endpoints REST
+│
+├── calls/
+│   ├── calls.controller.ts        # Endpoints REST (/calls/*)
+│   ├── calls.service.ts           # Lógica de negocio y orquestación
+│   ├── calls.repository.ts        # Persistencia en memoria
+│   │
+│   ├── dto/
+│   │   ├── create-call.dto.ts
+│   │   ├── call-action.dto.ts
+│   │   ├── invite-call.dto.ts
+│   │   └── call-response.dto.ts
+│   │
+│   ├── entities/
+│   │   └── call.entity.ts
+│   │
+│   ├── enum/
+│   │   └── callStatusEnum.ts      # RINGING | ACCEPTED | REJECTED | ENDED | MISSED
+│   │
+│   ├── gateway/
+│   │   └── gateway.ts             # WebSocket gateway (Socket.IO)
+│   │
+│   ├── mappers/
+│   │   └── call.mapper.ts
+│   │
+│   └── mediasoup/
+│       └── mediasoup.service.ts   # Gestión de rooms y transports SFU
+│
+├── events/
+│   └── event.service.ts           # Eventos de negocio (console.log)
+│
+├── metrics/
+│   ├── metrics.controller.ts      # GET /metrics (Prometheus scrape endpoint)
+│   ├── metrics.interceptor.ts     # Interceptor HTTP para medir latencia
+│   └── metrics.service.ts         # Registro de contadores e histogramas
+│
+└── types/
+    └── websocket.types.ts
 ```
 
-## Instalacion
+---
 
-Con `pnpm` (recomendado por lockfile):
-
-```bash
-pnpm install
-```
-
-Opcional con `npm`:
+## Instalación
 
 ```bash
 npm install
 ```
 
-## Ejecucion
+---
 
-Modo desarrollo:
-
-```bash
-pnpm run start:dev
-```
-
-Ejecucion normal:
+## Ejecución
 
 ```bash
-pnpm run start
+# Desarrollo con hot-reload
+npm run start:dev
+
+# Producción
+npm run build
+npm run start:prod
 ```
 
-Produccion (requiere build previo):
+La API queda disponible en `http://localhost:3000`.  
+El socket path es `/calls/socket.io`.
 
-```bash
-pnpm run build
-pnpm run start:prod
+---
+
+## API REST
+
+Todos los endpoints requieren el header:
+
+```
+Authorization: Bearer <JWT_TOKEN>
 ```
 
-## API
+### Crear llamada
 
-### 1) Crear llamada
-
-- Metodo: `POST`
-- Ruta: `/calls/create`
-
-Request body:
+```
+POST /calls/create
+```
 
 ```json
 {
   "callerId": "user-a",
-  "participants": ["user-b", "user-c", "user-d"]
+  "participants": ["user-b", "user-c"]
 }
 ```
 
-Respuesta esperada (ejemplo):
+### Aceptar llamada
+
+```
+POST /calls/:id/accept
+```
 
 ```json
-{
-  "callId": "a4c0a7d6-72e8-4a2d-885f-dbe338a00f3c",
-  "callerId": "user-a",
-  "participants": ["user-b", "user-c", "user-d"],
-  "acceptedUsers": [],
-  "rejectedUsers": [],
-  "status": "RINGING",
-  "createdAt": "2026-03-20T19:22:31.331Z"
-}
+{ "userId": "user-b" }
 ```
 
-### 2) Aceptar llamada
+### Rechazar llamada
 
-- Metodo: `POST`
-- Ruta: `/calls/:id/accept`
-
-Request body:
+```
+POST /calls/:id/reject
+```
 
 ```json
-{
-  "userId": "user-b"
-}
+{ "userId": "user-b" }
 ```
 
-Ejemplo:
+### Finalizar llamada
 
-```bash
-curl -X POST http://localhost:3000/calls/<CALL_ID>/accept -H "Content-Type: application/json" -d '{"userId":"user-b"}'
+```
+POST /calls/:id/end
 ```
 
-### 3) Rechazar llamada
+### Abandonar llamada
 
-- Metodo: `POST`
-- Ruta: `/calls/:id/reject`
-
-Request body:
+```
+POST /calls/:id/leave
+```
 
 ```json
-{
-  "userId": "user-b"
-}
+{ "userId": "user-b" }
 ```
 
-Ejemplo:
+### Invitar a llamada
 
-```bash
-curl -X POST http://localhost:3000/calls/<CALL_ID>/reject -H "Content-Type: application/json" -d '{"userId":"user-b"}'
+```
+POST /calls/:id/invite
 ```
 
-### 4) Finalizar llamada
-
-- Metodo: `POST`
-- Ruta: `/calls/:id/end`
-
-Ejemplo:
-
-```bash
-curl -X POST http://localhost:3000/calls/<CALL_ID>/end
+```json
+{ "userId": "user-d" }
 ```
 
-### 5) Consultar llamada por id
+### Consultar llamada por ID
 
-- Metodo: `GET`
-- Ruta: `/calls/:id`
-
-Ejemplo:
-
-```bash
-curl http://localhost:3000/calls/<CALL_ID>
 ```
+GET /calls/:id
+```
+
+### Listar todas las llamadas
+
+```
+GET /calls
+```
+
+---
+
+## WebSocket — Eventos de llamada
+
+Conectar al gateway:
+
+```javascript
+import { io } from 'socket.io-client';
+const socket = io('https://omnicode-api-calls.azurewebsites.net', {
+  path: '/calls/socket.io',
+});
+```
+
+### Eventos que emite el cliente
+
+| Evento | Payload | Descripción |
+|---|---|---|
+| `register` | `{ userId }` | Registrar usuario en el gateway |
+| `join-call` | `{ callId, userId }` | Unirse al room de una llamada |
+| `leave-call` | `{ callId, userId }` | Salir del room de una llamada |
+| `ping` | — | Heartbeat |
+| `webrtc:offer` | `{ to, signal }` | Reenviar oferta SDP a otro usuario |
+| `webrtc:answer` | `{ to, signal }` | Reenviar respuesta SDP |
+| `webrtc:ice-candidate` | `{ to, signal }` | Reenviar ICE candidate |
+| `user:mute-changed` | `{ callId, userId, isMuted }` | Notificar cambio de mute |
+
+### Eventos que recibe el cliente
+
+| Evento | Descripción |
+|---|---|
+| `registered` | Confirmación de registro |
+| `incoming-call` | Llamada entrante |
+| `call-accepted` | Un participante aceptó |
+| `call-rejected` | Un participante rechazó |
+| `call-ended` | La llamada finalizó |
+| `call-missed` | La llamada expiró sin respuesta |
+| `call-in-progress` | Llamada activa al reconectar |
+| `user-joined` | Un usuario se unió |
+| `user-left` | Un usuario salió |
+| `webrtc:offer` | Oferta SDP entrante |
+| `webrtc:answer` | Respuesta SDP entrante |
+| `webrtc:ice-candidate` | ICE candidate entrante |
+| `user:mute-changed` | Cambio de mute de otro usuario |
+
+---
+
+## WebSocket — Señalización Mediasoup SFU
+
+Flujo para publicar y consumir media:
+
+### 1. Obtener capacidades RTP del router
+
+```javascript
+socket.emit('ms:get-rtp-capabilities', { callId }, (caps) => { ... });
+```
+
+### 2. Crear transport de envío (send) o recepción (recv)
+
+```javascript
+socket.emit('ms:create-transport', { callId }, (params) => { ... });
+```
+
+### 3. Conectar transport con parámetros DTLS
+
+```javascript
+socket.emit('ms:connect-transport', { callId, transportId, dtlsParameters });
+```
+
+### 4. Producir media (publicar)
+
+```javascript
+socket.emit('ms:produce', { callId, transportId, kind, rtpParameters }, ({ producerId }) => { ... });
+// El resto del room recibe: ms:new-producer { userId, producerId, kind }
+```
+
+### 5. Listar producers existentes
+
+```javascript
+socket.emit('ms:get-producers', { callId }, ({ producers }) => { ... });
+```
+
+### 6. Consumir media de otro producer
+
+```javascript
+socket.emit('ms:consume', { callId, transportId, producerId, rtpCapabilities }, (params) => { ... });
+```
+
+### 7. Reanudar consumer
+
+```javascript
+socket.emit('ms:resume-consumer', { callId, consumerId });
+```
+
+---
 
 ## Estados de llamada
 
-El enum de estados disponibles es:
-
-- `RINGING`
-- `ACCEPTED`
-- `REJECTED`
-- `ENDED`
-- `MISSED`
-
-Transiciones implementadas actualmente:
-
-- `createCall` crea en `RINGING` y registra todos los participantes.
-- `acceptCall` permite a cada usuario aceptar en estado `RINGING` o `ACCEPTED`. Cuando el primero acepta, cambia a `ACCEPTED`.
-- `rejectCall` permite a cada usuario rechazar. Si todos los participantes rechazan en estado `RINGING`, la llamada cambia a `REJECTED`.
-- `endCall` cambia `ACCEPTED -> ENDED`.
-- Timeout automático: si nadie responde en 50 segundos, la llamada cambia a `MISSED`.
-
-## WebSocket Events
-
-El gateway emite eventos en tiempo real para gestión de llamadas y señalización WebRTC:
-
-### Eventos de Llamadas:
-- `incoming-call`: Se emite cuando se crea una llamada (solo receptores)
-- `call-accepted`: Se emite cuando un usuario acepta
-- `call-rejected`: Se emite cuando un usuario rechaza
-- `call-ended`: Se emite cuando la llamada finaliza
-- `call-missed`: Se emite cuando la llamada expira sin respuesta
-
-### Eventos WebRTC (señalización):
-- `webrtc:offer`: Intercambio de oferta SDP para conexión peer-to-peer
-- `webrtc:answer`: Respuesta SDP a una oferta recibida
-- `webrtc:ice-candidate`: Intercambio de ICE candidates para NAT traversal
-
-### Eventos de Gestión:
-- `register`: Registrar un usuario con su socketId
-- `join-call`: Unirse a un room de llamada específico
-- `leave-call`: Salir de un room de llamada
-- `ping`: Heartbeat para verificar conexión activa
-
-**Para documentación completa del API WebSocket, ver [WEBSOCKET_API.md](./WEBSOCKET_API.md)**
-
-Ejemplo de uso básico:
-
-```javascript
-socket.emit('register', 'user-id');
-
-socket.on('incoming-call', (call) => {
-  console.log('Llamada entrante:', call);
-});
-
-socket.on('webrtc:offer', async ({ from, signal }) => {
-  await peerConnection.setRemoteDescription(signal);
-  const answer = await peerConnection.createAnswer();
-  socket.emit('webrtc:answer', { to: from, signal: answer });
-});
+```
+createCall ──► RINGING
+                  │
+         ┌────────┴────────┐
+         │                 │
+    acceptCall         rejectCall (todos)
+         │                 │
+      ACCEPTED          REJECTED
+         │
+    ┌────┴────┐
+    │         │
+  endCall  timeout (50s)
+    │         │
+  ENDED     MISSED
 ```
 
-## Eventos de negocio
+---
 
-Cada acción emite un evento por consola via `EventService`:
+## Testing
 
-- `call.created`: Cuando se crea una llamada.
-- `call.accepted`: Cuando un usuario acepta.
-- `call.rejected`: Cuando todos rechazan.
-- `call.ended`: Cuando finaliza la llamada.
-- `call.missed`: Cuando expira sin respuesta.
+```bash
+# Ejecutar tests
+npm run test
 
-Actualmente estos eventos se registran con `console.log` e inyectados en el servicio.
+# Con reporte de cobertura
+npm run test:cov
+```
 
+Los tests unitarios se encuentran en `test/unit/` y cubren: gateway, servicio de llamadas, repositorio, controlador, mapper, guard JWT y servicio de eventos.
+
+El análisis de calidad con SonarCloud se ejecuta automáticamente en cada push a `main`.

@@ -71,7 +71,7 @@ describe('CallService', () => {
     mediasoupService = module.get(MediasoupService);
   });
 
-  // ─── createCall ───────────────────────────────────────────────────────────
+  // createCall
 
   describe('createCall', () => {
     it('saves the call, notifies participants and emits event', async () => {
@@ -131,7 +131,7 @@ describe('CallService', () => {
     });
   });
 
-  // ─── acceptCall ───────────────────────────────────────────────────────────
+  // acceptCall 
 
   describe('acceptCall', () => {
     it('transitions status from RINGING to ACCEPTED and sets startedAt', async () => {
@@ -194,7 +194,7 @@ describe('CallService', () => {
     });
   });
 
-  // ─── rejectCall ───────────────────────────────────────────────────────────
+  // rejectCall 
 
   describe('rejectCall', () => {
     it('adds user to rejectedUsers and keeps RINGING when not all rejected', async () => {
@@ -250,7 +250,7 @@ describe('CallService', () => {
     });
   });
 
-  // ─── endCall ──────────────────────────────────────────────────────────────
+  //  endCall 
 
   describe('endCall', () => {
     it('transitions ACCEPTED call to ENDED and sets endedAt', async () => {
@@ -298,7 +298,6 @@ describe('CallService', () => {
     });
   });
 
-  // ─── leaveCall ────────────────────────────────────────────────────────────
 
   describe('leaveCall', () => {
     it('removes participant from activeParticipants', async () => {
@@ -354,7 +353,6 @@ describe('CallService', () => {
     });
   });
 
-  // ─── joinCall ─────────────────────────────────────────────────────────────
 
   describe('joinCall', () => {
     it('adds user to activeParticipants and participants', async () => {
@@ -387,7 +385,6 @@ describe('CallService', () => {
     });
   });
 
-  // ─── inviteToCall ─────────────────────────────────────────────────────────
 
   describe('inviteToCall', () => {
     it('adds new invitees, sends incoming-call events and emits call.invited', async () => {
@@ -431,7 +428,6 @@ describe('CallService', () => {
     });
   });
 
-  // ─── cleanupUserCalls ─────────────────────────────────────────────────────
 
   describe('cleanupUserCalls', () => {
     it('delegates to repo.forceEndUserCalls and returns summary', async () => {
@@ -445,7 +441,6 @@ describe('CallService', () => {
     });
   });
 
-  // ─── getAllCalls ───────────────────────────────────────────────────────────
 
   describe('getAllCalls', () => {
     it('returns all calls from the repository', async () => {
@@ -458,7 +453,6 @@ describe('CallService', () => {
     });
   });
 
-  // ─── getCallResponse ──────────────────────────────────────────────────────
 
   describe('getCallResponse', () => {
     it('returns mapped response for existing call', async () => {
@@ -477,7 +471,6 @@ describe('CallService', () => {
     });
   });
 
-  // ─── leaveCall (broadcastToCall branch) ───────────────────────────────────
 
   describe('leaveCall broadcastToCall', () => {
     it('broadcasts closed producer ids when mediasoup returns them', async () => {

@@ -73,6 +73,8 @@ export type ServerToClientEvents =
   | CallEndedEvent
   | CallMissedEvent;
 
+
+//Importante
 export type ClientToServerEvents =
   | 'register'
   | 'join-call'
