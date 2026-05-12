@@ -203,6 +203,158 @@ describe('CallGateway', () => {
     });
   });
 
+  // ─── MediaSoup SFU signaling ──────────────────────────────────────────────
+
+  describe('handleGetRtpCapabilities', () => {
+    it('returns rtp capabilities for a call', async () => {
+      const result = await gateway.handleGetRtpCapabilities({ callId: 'call-1' });
+      expect(mockMediasoupService.ensureRoom).toHaveBeenCalledWith('call-1');
+      expect(result).toEqual({ codecs: [] });
+    });
+
+    it('returns error when mediasoup throws', async () => {
+      mockMediasoupService.ensureRoom.mockRejectedValueOnce(new Error('room error'));
+      const result = await gateway.handleGetRtpCapabilities({ callId: 'call-1' });
+      expect(result).toEqual({ error: 'room error' });
+    });
+  });
+
+  describe('handleCreateTransport', () => {
+    it('returns error when user is not registered', async () => {
+      const result = await gateway.handleCreateTransport({ callId: 'call-1' }, mockSocket);
+      expect(result).toEqual({ error: 'Not registered' });
+    });
+
+    it('creates transport for registered user', async () => {
+      registerUser('alice');
+      const result = await gateway.handleCreateTransport({ callId: 'call-1' }, mockSocket);
+      expect(mockMediasoupService.createTransport).toHaveBeenCalledWith('call-1', 'alice');
+      expect(result).toEqual({ id: 'transport-1' });
+    });
+
+    it('returns error when transport creation fails', async () => {
+      registerUser('alice');
+      mockMediasoupService.createTransport.mockRejectedValueOnce(new Error('transport error'));
+      const result = await gateway.handleCreateTransport({ callId: 'call-1' }, mockSocket);
+      expect(result).toEqual({ error: 'transport error' });
+    });
+  });
+
+  describe('handleConnectTransport', () => {
+    it('connects transport and returns success', async () => {
+      const result = await gateway.handleConnectTransport({
+        callId: 'call-1',
+        transportId: 'transport-1',
+        dtlsParameters: {},
+      });
+      expect(mockMediasoupService.connectTransport).toHaveBeenCalledWith('call-1', 'transport-1', {});
+      expect(result).toEqual({ success: true });
+    });
+
+    it('returns error when connect fails', async () => {
+      mockMediasoupService.connectTransport.mockRejectedValueOnce(new Error('connect error'));
+      const result = await gateway.handleConnectTransport({
+        callId: 'call-1',
+        transportId: 'transport-1',
+        dtlsParameters: {},
+      });
+      expect(result).toEqual({ error: 'connect error' });
+    });
+  });
+
+  describe('handleProduce', () => {
+    it('returns error when user is not registered', async () => {
+      const result = await gateway.handleProduce(
+        { callId: 'call-1', transportId: 'transport-1', kind: 'audio', rtpParameters: {} },
+        mockSocket,
+      );
+      expect(result).toEqual({ error: 'Not registered' });
+    });
+
+    it('produces and notifies call room', async () => {
+      registerUser('alice');
+      const toEmit = jest.fn();
+      mockSocket.to = jest.fn().mockReturnValue({ emit: toEmit });
+      const result = await gateway.handleProduce(
+        { callId: 'call-1', transportId: 'transport-1', kind: 'audio', rtpParameters: {} },
+        mockSocket,
+      );
+      expect(result).toEqual({ producerId: 'producer-1' });
+      expect(toEmit).toHaveBeenCalledWith('ms:new-producer', expect.objectContaining({ userId: 'alice', producerId: 'producer-1' }));
+    });
+
+    it('returns error when produce fails', async () => {
+      registerUser('alice');
+      mockMediasoupService.produce.mockRejectedValueOnce(new Error('produce error'));
+      const result = await gateway.handleProduce(
+        { callId: 'call-1', transportId: 'transport-1', kind: 'audio', rtpParameters: {} },
+        mockSocket,
+      );
+      expect(result).toEqual({ error: 'produce error' });
+    });
+  });
+
+  describe('handleGetProducers', () => {
+    it('returns producers for a call', async () => {
+      mockMediasoupService.getProducers.mockResolvedValueOnce([{ id: 'p1' }]);
+      const result = await gateway.handleGetProducers({ callId: 'call-1' });
+      expect(result).toEqual({ producers: [{ id: 'p1' }] });
+    });
+  });
+
+  describe('handleConsume', () => {
+    it('returns error when user is not registered', async () => {
+      const result = await gateway.handleConsume(
+        { callId: 'call-1', transportId: 'transport-1', producerId: 'p1', rtpCapabilities: {} },
+        mockSocket,
+      );
+      expect(result).toEqual({ error: 'Not registered' });
+    });
+
+    it('consumes and returns consumer info', async () => {
+      registerUser('alice');
+      const result = await gateway.handleConsume(
+        { callId: 'call-1', transportId: 'transport-1', producerId: 'p1', rtpCapabilities: {} },
+        mockSocket,
+      );
+      expect(result).toEqual({ id: 'consumer-1', kind: 'audio' });
+    });
+
+    it('returns error when consume fails', async () => {
+      registerUser('alice');
+      mockMediasoupService.consume.mockRejectedValueOnce(new Error('consume error'));
+      const result = await gateway.handleConsume(
+        { callId: 'call-1', transportId: 'transport-1', producerId: 'p1', rtpCapabilities: {} },
+        mockSocket,
+      );
+      expect(result).toEqual({ error: 'consume error' });
+    });
+  });
+
+  describe('handleMuteChanged', () => {
+    it('broadcasts mute change to call room', () => {
+      const toEmit = jest.fn();
+      mockSocket.to = jest.fn().mockReturnValue({ emit: toEmit });
+      gateway.handleMuteChanged({ callId: 'call-1', userId: 'alice', isMuted: true }, mockSocket);
+      expect(mockSocket.to).toHaveBeenCalledWith('call:call-1');
+      expect(toEmit).toHaveBeenCalledWith('user:mute-changed', { userId: 'alice', isMuted: true });
+    });
+  });
+
+  describe('handleResumeConsumer', () => {
+    it('resumes consumer and returns success', async () => {
+      const result = await gateway.handleResumeConsumer({ callId: 'call-1', consumerId: 'consumer-1' });
+      expect(mockMediasoupService.resumeConsumer).toHaveBeenCalledWith('call-1', 'consumer-1');
+      expect(result).toEqual({ success: true });
+    });
+
+    it('returns error when resume fails', async () => {
+      mockMediasoupService.resumeConsumer.mockRejectedValueOnce(new Error('resume error'));
+      const result = await gateway.handleResumeConsumer({ callId: 'call-1', consumerId: 'consumer-1' });
+      expect(result).toEqual({ error: 'resume error' });
+    });
+  });
+
   // ─── WebRTC signaling relay ───────────────────────────────────────────────
 
   describe('handleWebRTCOffer', () => {
