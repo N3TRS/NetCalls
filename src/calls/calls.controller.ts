@@ -12,17 +12,17 @@ export class CallController {
 
   @Post('create')
   createCall(@Body() data: CreateCallDto) {
-    return this.service.createCall(data.callerId, data.participants);
+    return this.service.createCall(data.callerId, data.sessionId, data.participants);
   }
 
   @Post(':id/accept')
   acceptCall(@Param('id') id: string, @Body() data: CallActionDto) {
-    return this.service.acceptCall(id, data.userId);
+    return this.service.acceptCall(id, data.userId, data.sessionId);
   }
 
   @Post(':id/reject')
   rejectCall(@Param('id') id: string, @Body() data: CallActionDto) {
-    return this.service.rejectCall(id, data.userId);
+    return this.service.rejectCall(id, data.userId, data.sessionId);
   }
 
   @Post(':id/end')
@@ -32,17 +32,17 @@ export class CallController {
 
   @Post(':id/leave')
   leaveCall(@Param('id') id: string, @Body() data: CallActionDto) {
-    return this.service.leaveCall(id, data.userId);
+    return this.service.leaveCall(id, data.userId, data.sessionId);
   }
 
   @Post(':id/join')
   joinCall(@Param('id') id: string, @Body() data: CallActionDto) {
-    return this.service.joinCall(id, data.userId);
+    return this.service.joinCall(id, data.userId, data.sessionId);
   }
 
   @Post(':id/invite')
   inviteToCall(@Param('id') id: string, @Body() data: InviteCallDto) {
-    return this.service.inviteToCall(id, data.inviterId, data.inviteeIds);
+    return this.service.inviteToCall(id, data.inviterId, data.sessionId, data.inviteeIds);
   }
 
   @Get(':id')

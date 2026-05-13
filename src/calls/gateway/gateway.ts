@@ -13,7 +13,6 @@ import { forwardRef, Inject, Logger } from '@nestjs/common';
 import { CallRepository } from '../calls.repository';
 import { CallService } from '../calls.service';
 import { MediasoupService } from '../mediasoup/mediasoup.service';
-import { CallStatus } from '../enum/callStatusEnum';
 
 @WebSocketGateway({
   path: '/calls/socket.io',
@@ -25,9 +24,32 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server!: Server;
 
   private readonly logger = new Logger(CallGateway.name);
-  private users = new Map<string, string>();
-  private sockets = new Map<string, string>();
+  private socketCtx = new Map<string, { userId: string; sessionId: string }>();
+  private userSockets = new Map<string, Set<string>>(); // `${userId}::${sessionId}` → socketIds
   private callRooms = new Map<string, Set<string>>();
+
+  private userKey(userId: string, sessionId: string) {
+    return `${userId}::${sessionId}`;
+  }
+
+  private getSocketIdsFor(userId: string, sessionId: string): string[] {
+    const set = this.userSockets.get(this.userKey(userId, sessionId));
+    return set ? [...set] : [];
+  }
+
+  private requireCtx(client: Socket) {
+    const ctx = this.socketCtx.get(client.id);
+    if (!ctx) throw new Error('Not registered');
+    return ctx;
+  }
+
+  private async assertSocketCallSession(client: Socket, callId: string) {
+    const ctx = this.requireCtx(client);
+    const call = await this.repo.findById(callId);
+    if (!call) throw new Error('Call not found');
+    if (call.sessionId !== ctx.sessionId) throw new Error('Wrong session');
+    return { ctx, call };
+  }
 
   constructor(
     private readonly repo: CallRepository,
@@ -41,119 +63,142 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   handleDisconnect(client: Socket) {
-    const userId = this.sockets.get(client.id);
-    if (userId) {
-      this.logger.log(`User ${userId} disconnected (socket: ${client.id})`);
-      this.users.delete(userId);
-      this.sockets.delete(client.id);
+    const ctx = this.socketCtx.get(client.id);
+    if (!ctx) return;
+    const { userId, sessionId } = ctx;
+    this.logger.log(
+      `User ${userId} (session ${sessionId}) disconnected (socket: ${client.id})`,
+    );
 
-      this.callRooms.forEach((users, callId) => {
-        if (users.has(userId)) {
-          users.delete(userId);
-          if (users.size === 0) {
-            this.callRooms.delete(callId);
-          }
-        }
-      });
-
-      this.repo.findActiveCall(userId).then((call) => {
-        if (call) {
-          this.callService.leaveCall(call.id, userId).catch(() => {});
-          this.logger.log(`User ${userId} left call ${call.id} on disconnect`);
-        }
-      });
+    this.socketCtx.delete(client.id);
+    const key = this.userKey(userId, sessionId);
+    const set = this.userSockets.get(key);
+    if (set) {
+      set.delete(client.id);
+      if (set.size > 0) {
+        // Other tabs of this user in this session are still connected; keep the call alive.
+        return;
+      }
+      this.userSockets.delete(key);
     }
+
+    this.callRooms.forEach((users, callId) => {
+      if (users.has(userId)) {
+        users.delete(userId);
+        if (users.size === 0) {
+          this.callRooms.delete(callId);
+        }
+      }
+    });
+
+    this.repo.findActiveCall(userId).then((call) => {
+      if (call && call.sessionId === sessionId) {
+        this.callService.leaveCall(call.id, userId, sessionId).catch(() => {});
+        this.logger.log(`User ${userId} left call ${call.id} on disconnect`);
+      }
+    });
   }
 
   @SubscribeMessage('register')
-  handleRegister(@MessageBody() data: any, @ConnectedSocket() client: Socket) {
+  handleRegister(
+    @MessageBody() data: { userId?: string; sessionId?: string } | string,
+    @ConnectedSocket() client: Socket,
+  ) {
     const userId = typeof data === 'string' ? data : data?.userId;
+    const sessionId = typeof data === 'string' ? undefined : data?.sessionId;
 
-    if (!userId) {
-      this.logger.warn(`Registration attempt without userId: ${client.id}`);
-      this.logger.warn(`Received data:`, data);
-      return { success: false, error: 'userId is required' };
+    if (!userId || !sessionId) {
+      this.logger.warn(
+        `Registration missing userId/sessionId: ${client.id}`,
+      );
+      return { success: false, error: 'userId and sessionId are required' };
     }
 
-    const oldSocketId = this.users.get(userId);
-    if (oldSocketId) {
-      this.logger.log(
-        `User ${userId} was already registered with socket ${oldSocketId}, updating to ${client.id}`,
-      );
-      this.sockets.delete(oldSocketId);
+    this.socketCtx.set(client.id, { userId, sessionId });
+    const key = this.userKey(userId, sessionId);
+    let set = this.userSockets.get(key);
+    if (!set) {
+      set = new Set();
+      this.userSockets.set(key, set);
     }
+    set.add(client.id);
 
-    this.users.set(userId, client.id);
-    this.sockets.set(client.id, userId);
+    this.logger.log(
+      `User ${userId} registered (session ${sessionId}, socket ${client.id})`,
+    );
 
-    this.logger.log(`User ${userId} registered with socket ${client.id}`);
+    client.emit('registered', {
+      success: true,
+      userId,
+      sessionId,
+      socketId: client.id,
+    });
 
-    client.emit('registered', { success: true, userId, socketId: client.id });
-
-    // Notify late joiners about any ongoing call they are not part of
-    this.repo.findAll().then((calls) => {
-      const activeCall = calls.find(
-        (c) =>
-          c.status === CallStatus.ACCEPTED &&
-          !c.activeParticipants.includes(userId),
-      );
-      if (activeCall) {
+    // Notify late joiners about an ongoing call in THIS session only.
+    this.repo.findInProgressForSession(sessionId).then((activeCall) => {
+      if (activeCall && !activeCall.activeParticipants.includes(userId)) {
         client.emit('call-in-progress', activeCall);
       }
     });
 
-    return { success: true, userId, socketId: client.id };
+    return { success: true, userId, sessionId, socketId: client.id };
   }
 
   @SubscribeMessage('join-call')
   async handleJoinCall(
-    @MessageBody() data: { callId: string; userId: string },
+    @MessageBody() data: { callId: string },
     @ConnectedSocket() client: Socket,
   ) {
-    const { callId, userId } = data;
+    const { callId } = data;
+    try {
+      const { ctx } = await this.assertSocketCallSession(client, callId);
+      const { userId } = ctx;
 
-    if (!this.callRooms.has(callId)) {
-      this.callRooms.set(callId, new Set());
+      if (!this.callRooms.has(callId)) {
+        this.callRooms.set(callId, new Set());
+      }
+      this.callRooms.get(callId)!.add(userId);
+      client.join(`call:${callId}`);
+
+      this.logger.log(`User ${userId} joined call ${callId}`);
+
+      const producers = await this.mediasoupService.getProducers(callId);
+      return { success: true, callId, userId, producers };
+    } catch (e: any) {
+      return { error: e.message };
     }
-
-    const room = this.callRooms.get(callId);
-    if (room) {
-      room.add(userId);
-    }
-    client.join(`call:${callId}`);
-
-    this.logger.log(`User ${userId} joined call ${callId}`);
-
-    // Send existing producers so the joining client can consume them immediately
-    const producers = await this.mediasoupService.getProducers(callId);
-    return { success: true, callId, userId, producers };
   }
 
   @SubscribeMessage('leave-call')
-  handleLeaveCall(
-    @MessageBody() data: { callId: string; userId: string },
+  async handleLeaveCall(
+    @MessageBody() data: { callId: string },
     @ConnectedSocket() client: Socket,
   ) {
-    const { callId, userId } = data;
+    const { callId } = data;
+    try {
+      const { ctx } = await this.assertSocketCallSession(client, callId);
+      const { userId } = ctx;
 
-    const room = this.callRooms.get(callId);
-    if (room) {
-      room.delete(userId);
-      if (room.size === 0) {
-        this.callRooms.delete(callId);
+      const room = this.callRooms.get(callId);
+      if (room) {
+        room.delete(userId);
+        if (room.size === 0) {
+          this.callRooms.delete(callId);
+        }
       }
+      client.leave(`call:${callId}`);
+
+      this.logger.log(`User ${userId} left call ${callId}`);
+      return { success: true, callId, userId };
+    } catch (e: any) {
+      return { error: e.message };
     }
-
-    client.leave(`call:${callId}`);
-
-    this.logger.log(`User ${userId} left call ${callId}`);
-    return { success: true, callId, userId };
   }
 
   @SubscribeMessage('ping')
   handlePing(@ConnectedSocket() client: Socket) {
-    const userId = this.sockets.get(client.id);
-    return { pong: true, timestamp: Date.now(), userId };
+    const ctx = this.socketCtx.get(client.id);
+    return { pong: true, timestamp: Date.now(), userId: ctx?.userId };
   }
 
   // WebRTC P2P signaling relay
@@ -163,10 +208,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { to: string; signal: RTCSessionDescriptionInit },
     @ConnectedSocket() client: Socket,
   ) {
-    const fromUserId = this.sockets.get(client.id);
-    const toSocketId = this.users.get(data.to);
-    if (toSocketId) {
-      this.server.to(toSocketId).emit('webrtc:offer', { from: fromUserId, signal: data.signal });
+    const ctx = this.socketCtx.get(client.id);
+    if (!ctx) return;
+    for (const sid of this.getSocketIdsFor(data.to, ctx.sessionId)) {
+      this.server.to(sid).emit('webrtc:offer', { from: ctx.userId, signal: data.signal });
     }
   }
 
@@ -175,10 +220,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { to: string; signal: RTCSessionDescriptionInit },
     @ConnectedSocket() client: Socket,
   ) {
-    const fromUserId = this.sockets.get(client.id);
-    const toSocketId = this.users.get(data.to);
-    if (toSocketId) {
-      this.server.to(toSocketId).emit('webrtc:answer', { from: fromUserId, signal: data.signal });
+    const ctx = this.socketCtx.get(client.id);
+    if (!ctx) return;
+    for (const sid of this.getSocketIdsFor(data.to, ctx.sessionId)) {
+      this.server.to(sid).emit('webrtc:answer', { from: ctx.userId, signal: data.signal });
     }
   }
 
@@ -187,10 +232,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { to: string; signal: RTCIceCandidateInit },
     @ConnectedSocket() client: Socket,
   ) {
-    const fromUserId = this.sockets.get(client.id);
-    const toSocketId = this.users.get(data.to);
-    if (toSocketId) {
-      this.server.to(toSocketId).emit('webrtc:ice-candidate', { from: fromUserId, signal: data.signal });
+    const ctx = this.socketCtx.get(client.id);
+    if (!ctx) return;
+    for (const sid of this.getSocketIdsFor(data.to, ctx.sessionId)) {
+      this.server.to(sid).emit('webrtc:ice-candidate', { from: ctx.userId, signal: data.signal });
     }
   }
 
@@ -199,8 +244,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('ms:get-rtp-capabilities')
   async handleGetRtpCapabilities(
     @MessageBody() data: { callId: string },
+    @ConnectedSocket() client: Socket,
   ) {
     try {
+      await this.assertSocketCallSession(client, data.callId);
       await this.mediasoupService.ensureRoom(data.callId);
       return this.mediasoupService.getRouterRtpCapabilities(data.callId);
     } catch (e: any) {
@@ -213,11 +260,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { callId: string },
     @ConnectedSocket() client: Socket,
   ) {
-    const userId = this.sockets.get(client.id);
-    if (!userId) return { error: 'Not registered' };
     try {
+      const { ctx } = await this.assertSocketCallSession(client, data.callId);
       await this.mediasoupService.ensureRoom(data.callId);
-      return await this.mediasoupService.createTransport(data.callId, userId);
+      return await this.mediasoupService.createTransport(data.callId, ctx.userId);
     } catch (e: any) {
       return { error: e.message };
     }
@@ -227,8 +273,10 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleConnectTransport(
     @MessageBody()
     data: { callId: string; transportId: string; dtlsParameters: any },
+    @ConnectedSocket() client: Socket,
   ) {
     try {
+      await this.assertSocketCallSession(client, data.callId);
       await this.mediasoupService.connectTransport(
         data.callId,
         data.transportId,
@@ -251,9 +299,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     },
     @ConnectedSocket() client: Socket,
   ) {
-    const userId = this.sockets.get(client.id);
-    if (!userId) return { error: 'Not registered' };
     try {
+      const { ctx } = await this.assertSocketCallSession(client, data.callId);
+      const { userId } = ctx;
       const producerId = await this.mediasoupService.produce(
         data.callId,
         data.transportId,
@@ -261,7 +309,6 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         data.kind as any,
         data.rtpParameters,
       );
-      // Notify everyone else in the call room about the new producer
       client.to(`call:${data.callId}`).emit('ms:new-producer', {
         userId,
         producerId,
@@ -274,8 +321,16 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('ms:get-producers')
-  async handleGetProducers(@MessageBody() data: { callId: string }) {
-    return { producers: await this.mediasoupService.getProducers(data.callId) };
+  async handleGetProducers(
+    @MessageBody() data: { callId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    try {
+      await this.assertSocketCallSession(client, data.callId);
+      return { producers: await this.mediasoupService.getProducers(data.callId) };
+    } catch (e: any) {
+      return { error: e.message };
+    }
   }
 
   @SubscribeMessage('ms:consume')
@@ -289,10 +344,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     },
     @ConnectedSocket() client: Socket,
   ) {
-    const userId = this.sockets.get(client.id);
-    if (!userId) return { error: 'Not registered' };
-    this.logger.log(`[DEBUG] ms:consume — user=${userId} producer=${data.producerId} transport=${data.transportId}`);
     try {
+      const { ctx } = await this.assertSocketCallSession(client, data.callId);
+      this.logger.log(`[DEBUG] ms:consume — user=${ctx.userId} producer=${data.producerId} transport=${data.transportId}`);
       const result = await this.mediasoupService.consume(
         data.callId,
         data.transportId,
@@ -308,22 +362,29 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('user:mute-changed')
-  handleMuteChanged(
-    @MessageBody() data: { callId: string; userId: string; isMuted: boolean },
+  async handleMuteChanged(
+    @MessageBody() data: { callId: string; isMuted: boolean },
     @ConnectedSocket() client: Socket,
   ) {
-    client.to(`call:${data.callId}`).emit('user:mute-changed', {
-      userId: data.userId,
-      isMuted: data.isMuted,
-    });
+    try {
+      const { ctx } = await this.assertSocketCallSession(client, data.callId);
+      client.to(`call:${data.callId}`).emit('user:mute-changed', {
+        userId: ctx.userId,
+        isMuted: data.isMuted,
+      });
+    } catch {
+      // silent — mute UI updates aren't worth surfacing to client
+    }
   }
 
   @SubscribeMessage('ms:resume-consumer')
   async handleResumeConsumer(
     @MessageBody() data: { callId: string; consumerId: string },
+    @ConnectedSocket() client: Socket,
   ) {
     this.logger.log(`[DEBUG] ms:resume-consumer called — callId=${data.callId} consumerId=${data.consumerId}`);
     try {
+      await this.assertSocketCallSession(client, data.callId);
       await this.mediasoupService.resumeConsumer(data.callId, data.consumerId);
       return { success: true };
     } catch (e: any) {
@@ -333,60 +394,50 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // MediaSoup SFU signaling
 
-  sendIncomingCall(userId: string, data: Call) {
-    this.logger.log(`Attempting to send incoming call to user ${userId}`);
-    this.logger.log(`Current users map:`, Array.from(this.users.entries()));
+  private emitToUserInSession(
+    userId: string,
+    sessionId: string,
+    event: string,
+    payload: any,
+  ) {
+    const sockets = this.getSocketIdsFor(userId, sessionId);
+    for (const sid of sockets) {
+      this.server.to(sid).emit(event, payload);
+    }
+    return sockets.length;
+  }
 
-    const socketId = this.users.get(userId);
-    if (socketId) {
-      this.logger.log(`Found socket ${socketId} for user ${userId}`);
-      this.server.to(socketId).emit('incoming-call', data);
-      this.logger.log(
-        `Incoming call event emitted to user ${userId} (socket: ${socketId})`,
-      );
-      this.logger.log(`Call data:`, data);
-    } else {
+  sendIncomingCall(userId: string, data: Call) {
+    const count = this.emitToUserInSession(userId, data.sessionId, 'incoming-call', data);
+    if (count === 0) {
       this.logger.warn(
-        `User ${userId} not connected, cannot send incoming call`,
+        `User ${userId} not connected in session ${data.sessionId}, cannot send incoming call`,
       );
-      this.logger.warn(`Available users:`, Array.from(this.users.keys()));
+    } else {
+      this.logger.log(
+        `incoming-call emitted to ${userId} in session ${data.sessionId} (${count} socket(s))`,
+      );
     }
   }
 
   sendCallAccepted(userId: string, data: Call) {
-    const socketId = this.users.get(userId);
-    if (socketId) {
-      this.server.to(socketId).emit('call-accepted', data);
-      this.logger.log(`Call accepted notification sent to user ${userId}`);
-    }
+    this.emitToUserInSession(userId, data.sessionId, 'call-accepted', data);
   }
 
   sendCallEnded(userId: string, data: Call) {
-    const socketId = this.users.get(userId);
-    if (socketId) {
-      this.server.to(socketId).emit('call-ended', data);
-      this.logger.log(`Call ended notification sent to user ${userId}`);
-    }
+    this.emitToUserInSession(userId, data.sessionId, 'call-ended', data);
   }
 
   sendCallRejected(userId: string, data: Call) {
-    const socketId = this.users.get(userId);
-    if (socketId) {
-      this.server.to(socketId).emit('call-rejected', data);
-      this.logger.log(`Call rejected notification sent to user ${userId}`);
-    }
+    this.emitToUserInSession(userId, data.sessionId, 'call-rejected', data);
   }
 
   sendCallMissed(userId: string, data: Call) {
-    const socketId = this.users.get(userId);
-    if (socketId) {
-      this.server.to(socketId).emit('call-missed', data);
-      this.logger.log(`Call missed notification sent to user ${userId}`);
-    }
+    this.emitToUserInSession(userId, data.sessionId, 'call-missed', data);
   }
 
-  isUserConnected(userId: string): boolean {
-    return this.users.has(userId);
+  isUserConnected(userId: string, sessionId: string): boolean {
+    return this.getSocketIdsFor(userId, sessionId).length > 0;
   }
 
   getUsersInCall(callId: string): string[] {
@@ -400,26 +451,16 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   sendUserLeft(userId: string, data: Call, leavingUserId: string) {
-    const socketId = this.users.get(userId);
-    if (socketId) {
-      this.server
-        .to(socketId)
-        .emit('user-left', { call: data, userId: leavingUserId });
-      this.logger.log(
-        `user-left notification sent to ${userId} (left: ${leavingUserId})`,
-      );
-    }
+    this.emitToUserInSession(userId, data.sessionId, 'user-left', {
+      call: data,
+      userId: leavingUserId,
+    });
   }
 
   sendUserJoined(userId: string, data: Call, joiningUserId: string) {
-    const socketId = this.users.get(userId);
-    if (socketId) {
-      this.server
-        .to(socketId)
-        .emit('user-joined', { call: data, userId: joiningUserId });
-      this.logger.log(
-        `user-joined notification sent to ${userId} (joined: ${joiningUserId})`,
-      );
-    }
+    this.emitToUserInSession(userId, data.sessionId, 'user-joined', {
+      call: data,
+      userId: joiningUserId,
+    });
   }
 }
