@@ -5,6 +5,7 @@ export class CallMapper {
   static toResponse(call: Call): CallResponseDto {
     return {
       callId: call.id,
+      sessionId: call.sessionId,
       callerId: call.callerId,
       participants: call.participants,
       activeParticipants: call.activeParticipants,

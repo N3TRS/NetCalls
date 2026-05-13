@@ -26,6 +26,15 @@ export class CallRepository {
     return Promise.resolve(call ?? null);
   }
 
+  findInProgressForSession(sessionId: string) {
+    const call = [...this.calls.values()].find(
+      (item) =>
+        item.sessionId === sessionId && item.status === CallStatus.ACCEPTED,
+    );
+
+    return Promise.resolve(call ?? null);
+  }
+
   async forceEndUserCalls(userId: string): Promise<number> {
     let count = 0;
     const activeCalls = [...this.calls.values()].filter(

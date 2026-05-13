@@ -8,6 +8,7 @@ import { MediasoupService } from './mediasoup/mediasoup.service';
 import {
   Injectable,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   forwardRef,
   Inject,
@@ -24,7 +25,7 @@ export class CallService {
     private mediasoupService: MediasoupService,
   ) {}
 
-  async createCall(callerId: string, participants: string[]) {
+  async createCall(callerId: string, sessionId: string, participants: string[]) {
     await this.validateUsers(callerId, participants);
 
     // validar caller
@@ -39,6 +40,7 @@ export class CallService {
 
     const call: Call = {
       id: randomUUID(),
+      sessionId,
       callerId,
       participants,
       activeParticipants: [callerId],
@@ -72,8 +74,9 @@ export class CallService {
     return CallMapper.toResponse(call);
   }
 
-  async acceptCall(callId: string, userId: string) {
+  async acceptCall(callId: string, userId: string, sessionId: string) {
     const call = await this.getOrFail(callId);
+    this.assertSession(call, sessionId);
 
     if (
       call.status !== CallStatus.RINGING &&
@@ -106,8 +109,9 @@ export class CallService {
     return CallMapper.toResponse(call);
   }
 
-  async rejectCall(callId: string, userId: string) {
+  async rejectCall(callId: string, userId: string, sessionId: string) {
     const call = await this.getOrFail(callId);
+    this.assertSession(call, sessionId);
 
     if (
       call.status !== CallStatus.RINGING &&
@@ -193,8 +197,9 @@ export class CallService {
     });
   }
 
-  async leaveCall(callId: string, userId: string) {
+  async leaveCall(callId: string, userId: string, sessionId: string) {
     const call = await this.getOrFail(callId);
+    this.assertSession(call, sessionId);
 
     if (
       call.status !== CallStatus.ACCEPTED &&
@@ -231,8 +236,9 @@ export class CallService {
     return CallMapper.toResponse(call);
   }
 
-  async joinCall(callId: string, userId: string) {
+  async joinCall(callId: string, userId: string, sessionId: string) {
     const call = await this.getOrFail(callId);
+    this.assertSession(call, sessionId);
 
     if (call.status !== CallStatus.ACCEPTED) {
       throw new BadRequestException('Call is not active');
@@ -252,8 +258,14 @@ export class CallService {
     return CallMapper.toResponse(call);
   }
 
-  async inviteToCall(callId: string, inviterId: string, inviteeIds: string[]) {
+  async inviteToCall(
+    callId: string,
+    inviterId: string,
+    sessionId: string,
+    inviteeIds: string[],
+  ) {
     const call = await this.getOrFail(callId);
+    this.assertSession(call, sessionId);
 
     if (
       call.status !== CallStatus.ACCEPTED &&
@@ -307,6 +319,12 @@ export class CallService {
   async getCallResponse(callId: string) {
     const call = await this.getOrFail(callId);
     return CallMapper.toResponse(call);
+  }
+
+  private assertSession(call: Call, sessionId: string) {
+    if (call.sessionId !== sessionId) {
+      throw new ForbiddenException('Wrong session');
+    }
   }
 
   async validateUsers(callerId: string, participants: string[]) {

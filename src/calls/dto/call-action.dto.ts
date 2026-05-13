@@ -4,4 +4,8 @@ export class CallActionDto {
   @IsString()
   @IsNotEmpty()
   userId: string;
+
+  @IsString()
+  @IsNotEmpty()
+  sessionId: string;
 }

@@ -1,5 +1,6 @@
 export class CallResponseDto {
   callId: string;
+  sessionId: string;
   callerId: string;
   participants: string[];
   activeParticipants: string[];
