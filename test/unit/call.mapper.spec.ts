@@ -5,6 +5,7 @@ import { CallStatus } from '../../src/calls/enum/callStatusEnum';
 describe('CallMapper', () => {
   const baseCall: Call = {
     id: 'call-id',
+    sessionId: 'session-1',
     callerId: 'caller',
     participants: ['p1', 'p2'],
     activeParticipants: ['caller', 'p1'],
@@ -17,6 +18,10 @@ describe('CallMapper', () => {
 
   it('maps id to callId', () => {
     expect(CallMapper.toResponse(baseCall).callId).toBe('call-id');
+  });
+
+  it('maps sessionId', () => {
+    expect(CallMapper.toResponse(baseCall).sessionId).toBe('session-1');
   });
 
   it('maps all scalar fields correctly', () => {

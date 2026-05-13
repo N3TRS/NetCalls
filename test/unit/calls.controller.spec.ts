@@ -49,28 +49,28 @@ describe('CallController', () => {
   });
 
   it('createCall delegates to service with correct args', async () => {
-    const dto: CreateCallDto = { callerId: 'caller', participants: ['p1'] };
+    const dto: CreateCallDto = { callerId: 'caller', sessionId: 's1', participants: ['p1'] };
 
     const result = await controller.createCall(dto);
 
-    expect(service.createCall).toHaveBeenCalledWith('caller', ['p1']);
+    expect(service.createCall).toHaveBeenCalledWith('caller', 's1', ['p1']);
     expect(result).toBe(mockResponse);
   });
 
-  it('acceptCall delegates to service with callId and userId', async () => {
-    const dto: CallActionDto = { userId: 'p1' };
+  it('acceptCall delegates to service with callId, userId and sessionId', async () => {
+    const dto: CallActionDto = { userId: 'p1', sessionId: 's1' };
 
     await controller.acceptCall('call-1', dto);
 
-    expect(service.acceptCall).toHaveBeenCalledWith('call-1', 'p1');
+    expect(service.acceptCall).toHaveBeenCalledWith('call-1', 'p1', 's1');
   });
 
-  it('rejectCall delegates to service with callId and userId', async () => {
-    const dto: CallActionDto = { userId: 'p1' };
+  it('rejectCall delegates to service with callId, userId and sessionId', async () => {
+    const dto: CallActionDto = { userId: 'p1', sessionId: 's1' };
 
     await controller.rejectCall('call-1', dto);
 
-    expect(service.rejectCall).toHaveBeenCalledWith('call-1', 'p1');
+    expect(service.rejectCall).toHaveBeenCalledWith('call-1', 'p1', 's1');
   });
 
   it('endCall delegates to service with callId', async () => {
@@ -79,28 +79,28 @@ describe('CallController', () => {
     expect(service.endCall).toHaveBeenCalledWith('call-1');
   });
 
-  it('leaveCall delegates to service with callId and userId', async () => {
-    const dto: CallActionDto = { userId: 'p1' };
+  it('leaveCall delegates to service with callId, userId and sessionId', async () => {
+    const dto: CallActionDto = { userId: 'p1', sessionId: 's1' };
 
     await controller.leaveCall('call-1', dto);
 
-    expect(service.leaveCall).toHaveBeenCalledWith('call-1', 'p1');
+    expect(service.leaveCall).toHaveBeenCalledWith('call-1', 'p1', 's1');
   });
 
-  it('joinCall delegates to service with callId and userId', async () => {
-    const dto: CallActionDto = { userId: 'p1' };
+  it('joinCall delegates to service with callId, userId and sessionId', async () => {
+    const dto: CallActionDto = { userId: 'p1', sessionId: 's1' };
 
     await controller.joinCall('call-1', dto);
 
-    expect(service.joinCall).toHaveBeenCalledWith('call-1', 'p1');
+    expect(service.joinCall).toHaveBeenCalledWith('call-1', 'p1', 's1');
   });
 
-  it('inviteToCall delegates to service with callId, inviterId and inviteeIds', async () => {
-    const dto: InviteCallDto = { inviterId: 'caller', inviteeIds: ['p3'] };
+  it('inviteToCall delegates to service with callId, inviterId, sessionId and inviteeIds', async () => {
+    const dto: InviteCallDto = { inviterId: 'caller', sessionId: 's1', inviteeIds: ['p3'] };
 
     await controller.inviteToCall('call-1', dto);
 
-    expect(service.inviteToCall).toHaveBeenCalledWith('call-1', 'caller', ['p3']);
+    expect(service.inviteToCall).toHaveBeenCalledWith('call-1', 'caller', 's1', ['p3']);
   });
 
   it('getCall delegates to service and returns response', async () => {
