@@ -5,6 +5,10 @@ export class InviteCallDto {
   @IsNotEmpty()
   inviterId: string;
 
+  @IsString()
+  @IsNotEmpty()
+  sessionId: string;
+
   @IsArray()
   @ArrayMinSize(1, { message: 'At least one invitee is required' })
   @IsString({ each: true })

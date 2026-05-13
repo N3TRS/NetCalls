@@ -2,6 +2,7 @@ import { CallStatus } from '../enum/callStatusEnum';
 
 export class Call {
   id: string;
+  sessionId: string;
   callerId: string;
   participants: string[];
   activeParticipants: string[];

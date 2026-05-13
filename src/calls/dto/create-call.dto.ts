@@ -5,6 +5,10 @@ export class CreateCallDto {
   @IsNotEmpty()
   callerId: string;
 
+  @IsString()
+  @IsNotEmpty()
+  sessionId: string;
+
   @IsArray()
   @ArrayMinSize(1, { message: 'At least one participant is required' })
   @IsString({ each: true })
