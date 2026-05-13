@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { CallService } from '../../src/calls/calls.service';
 import { CallRepository } from '../../src/calls/calls.repository';
 import { EventService } from '../../src/events/event.service';
@@ -8,8 +12,11 @@ import { MediasoupService } from '../../src/calls/mediasoup/mediasoup.service';
 import { Call } from '../../src/calls/entities/call.entity';
 import { CallStatus } from '../../src/calls/enum/callStatusEnum';
 
+const S = 'session-1';
+
 const makeCall = (overrides: Partial<Call> = {}): Call => ({
   id: 'call-1',
+  sessionId: S,
   callerId: 'caller',
   participants: ['p1', 'p2'],
   activeParticipants: ['caller'],
@@ -74,44 +81,46 @@ describe('CallService', () => {
   // createCall
 
   describe('createCall', () => {
-    it('saves the call, notifies participants and emits event', async () => {
+    it('saves the call with sessionId, notifies participants and emits event', async () => {
       jest.useFakeTimers();
 
-      const result = await service.createCall('caller', ['p1', 'p2']);
+      const result = await service.createCall('caller', S, ['p1', 'p2']);
 
       expect(repo.save).toHaveBeenCalled();
+      expect((repo.save.mock.calls[0][0] as Call).sessionId).toBe(S);
       expect(gateway.sendIncomingCall).toHaveBeenCalledTimes(2);
       expect(gateway.sendIncomingCall).toHaveBeenCalledWith('p1', expect.any(Object));
       expect(gateway.sendIncomingCall).toHaveBeenCalledWith('p2', expect.any(Object));
       expect(eventService.emit).toHaveBeenCalledWith('call.created', expect.any(Object));
       expect(result.status).toBe(CallStatus.RINGING);
       expect(result.callerId).toBe('caller');
+      expect(result.sessionId).toBe(S);
 
       jest.useRealTimers();
     });
 
     it('throws if callerId is empty', async () => {
-      await expect(service.createCall('', ['p1'])).rejects.toThrow(BadRequestException);
+      await expect(service.createCall('', S, ['p1'])).rejects.toThrow(BadRequestException);
     });
 
     it('throws if participants array is empty', async () => {
-      await expect(service.createCall('caller', [])).rejects.toThrow(BadRequestException);
+      await expect(service.createCall('caller', S, [])).rejects.toThrow(BadRequestException);
     });
 
     it('throws if caller is included in participants', async () => {
-      await expect(service.createCall('caller', ['caller', 'p1'])).rejects.toThrow(BadRequestException);
+      await expect(service.createCall('caller', S, ['caller', 'p1'])).rejects.toThrow(BadRequestException);
     });
 
     it('throws if the caller is already in an active call', async () => {
       repo.findActiveCall.mockResolvedValueOnce(makeCall());
-      await expect(service.createCall('caller', ['p1'])).rejects.toThrow(BadRequestException);
+      await expect(service.createCall('caller', S, ['p1'])).rejects.toThrow(BadRequestException);
     });
 
     it('throws if a participant is already in an active call', async () => {
       repo.findActiveCall
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce(makeCall({ callerId: 'p1' }));
-      await expect(service.createCall('caller', ['p1'])).rejects.toThrow(BadRequestException);
+      await expect(service.createCall('caller', S, ['p1'])).rejects.toThrow(BadRequestException);
     });
 
     it('transitions to MISSED after 50 seconds if still RINGING', async () => {
@@ -120,7 +129,7 @@ describe('CallService', () => {
       const savedCall = makeCall({ status: CallStatus.RINGING });
       repo.findById.mockResolvedValue(savedCall);
 
-      await service.createCall('caller', ['p1']);
+      await service.createCall('caller', S, ['p1']);
 
       await jest.runAllTimersAsync();
 
@@ -138,7 +147,7 @@ describe('CallService', () => {
       const call = makeCall({ participants: ['p1'] });
       repo.findById.mockResolvedValue(call);
 
-      const result = await service.acceptCall('call-1', 'p1');
+      const result = await service.acceptCall('call-1', 'p1', S);
 
       expect(result.status).toBe(CallStatus.ACCEPTED);
       expect(result.startedAt).toBeInstanceOf(Date);
@@ -155,7 +164,7 @@ describe('CallService', () => {
       });
       repo.findById.mockResolvedValue(call);
 
-      await service.acceptCall('call-1', 'p2');
+      await service.acceptCall('call-1', 'p2', S);
 
       expect(call.startedAt).toBe(startedAt);
     });
@@ -164,7 +173,7 @@ describe('CallService', () => {
       const call = makeCall({ participants: ['p1'], acceptedUsers: ['p1'], status: CallStatus.ACCEPTED });
       repo.findById.mockResolvedValue(call);
 
-      await service.acceptCall('call-1', 'p1');
+      await service.acceptCall('call-1', 'p1', S);
 
       expect(call.acceptedUsers.filter((u) => u === 'p1')).toHaveLength(1);
     });
@@ -173,24 +182,29 @@ describe('CallService', () => {
       const call = makeCall({ participants: ['p1'] });
       repo.findById.mockResolvedValue(call);
 
-      await service.acceptCall('call-1', 'p1');
+      await service.acceptCall('call-1', 'p1', S);
 
       expect(gateway.sendCallAccepted).toHaveBeenCalled();
     });
 
     it('throws NotFoundException when call does not exist', async () => {
       repo.findById.mockResolvedValue(null);
-      await expect(service.acceptCall('missing', 'p1')).rejects.toThrow(NotFoundException);
+      await expect(service.acceptCall('missing', 'p1', S)).rejects.toThrow(NotFoundException);
     });
 
     it('throws BadRequestException when call status is ENDED', async () => {
       repo.findById.mockResolvedValue(makeCall({ status: CallStatus.ENDED, participants: ['p1'] }));
-      await expect(service.acceptCall('call-1', 'p1')).rejects.toThrow(BadRequestException);
+      await expect(service.acceptCall('call-1', 'p1', S)).rejects.toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when user is not a participant', async () => {
       repo.findById.mockResolvedValue(makeCall({ participants: ['p1'] }));
-      await expect(service.acceptCall('call-1', 'stranger')).rejects.toThrow(BadRequestException);
+      await expect(service.acceptCall('call-1', 'stranger', S)).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws ForbiddenException when sessionId does not match call.sessionId', async () => {
+      repo.findById.mockResolvedValue(makeCall({ participants: ['p1'] }));
+      await expect(service.acceptCall('call-1', 'p1', 'other-session')).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -201,7 +215,7 @@ describe('CallService', () => {
       const call = makeCall({ participants: ['p1', 'p2'] });
       repo.findById.mockResolvedValue(call);
 
-      const result = await service.rejectCall('call-1', 'p1');
+      const result = await service.rejectCall('call-1', 'p1', S);
 
       expect(result.rejectedUsers).toContain('p1');
       expect(result.status).toBe(CallStatus.RINGING);
@@ -211,7 +225,7 @@ describe('CallService', () => {
       const call = makeCall({ participants: ['p1'] });
       repo.findById.mockResolvedValue(call);
 
-      const result = await service.rejectCall('call-1', 'p1');
+      const result = await service.rejectCall('call-1', 'p1', S);
 
       expect(result.status).toBe(CallStatus.REJECTED);
     });
@@ -220,7 +234,7 @@ describe('CallService', () => {
       const call = makeCall({ participants: ['p1'], rejectedUsers: ['p1'] });
       repo.findById.mockResolvedValue(call);
 
-      await service.rejectCall('call-1', 'p1');
+      await service.rejectCall('call-1', 'p1', S);
 
       expect(call.rejectedUsers.filter((u) => u === 'p1')).toHaveLength(1);
     });
@@ -229,24 +243,29 @@ describe('CallService', () => {
       const call = makeCall({ participants: ['p1'] });
       repo.findById.mockResolvedValue(call);
 
-      await service.rejectCall('call-1', 'p1');
+      await service.rejectCall('call-1', 'p1', S);
 
       expect(gateway.sendCallRejected).toHaveBeenCalled();
     });
 
     it('throws NotFoundException when call does not exist', async () => {
       repo.findById.mockResolvedValue(null);
-      await expect(service.rejectCall('missing', 'p1')).rejects.toThrow(NotFoundException);
+      await expect(service.rejectCall('missing', 'p1', S)).rejects.toThrow(NotFoundException);
     });
 
     it('throws BadRequestException when call is already ENDED', async () => {
       repo.findById.mockResolvedValue(makeCall({ status: CallStatus.ENDED, participants: ['p1'] }));
-      await expect(service.rejectCall('call-1', 'p1')).rejects.toThrow(BadRequestException);
+      await expect(service.rejectCall('call-1', 'p1', S)).rejects.toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when user is not a participant', async () => {
       repo.findById.mockResolvedValue(makeCall({ participants: ['p1'] }));
-      await expect(service.rejectCall('call-1', 'stranger')).rejects.toThrow(BadRequestException);
+      await expect(service.rejectCall('call-1', 'stranger', S)).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws ForbiddenException when sessionId does not match call.sessionId', async () => {
+      repo.findById.mockResolvedValue(makeCall({ participants: ['p1'] }));
+      await expect(service.rejectCall('call-1', 'p1', 'other-session')).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -307,7 +326,7 @@ describe('CallService', () => {
       });
       repo.findById.mockResolvedValue(call);
 
-      await service.leaveCall('call-1', 'p1');
+      await service.leaveCall('call-1', 'p1', S);
 
       expect(call.activeParticipants).not.toContain('p1');
     });
@@ -316,7 +335,7 @@ describe('CallService', () => {
       const call = makeCall({ status: CallStatus.ACCEPTED, activeParticipants: ['caller', 'p1'] });
       repo.findById.mockResolvedValue(call);
 
-      const result = await service.leaveCall('call-1', 'caller');
+      const result = await service.leaveCall('call-1', 'caller', S);
 
       expect(result.status).toBe(CallStatus.ENDED);
     });
@@ -328,7 +347,7 @@ describe('CallService', () => {
       });
       repo.findById.mockResolvedValue(call);
 
-      await service.leaveCall('call-1', 'p1');
+      await service.leaveCall('call-1', 'p1', S);
 
       expect(gateway.sendUserLeft).toHaveBeenCalled();
     });
@@ -337,7 +356,7 @@ describe('CallService', () => {
       const call = makeCall({ status: CallStatus.ENDED });
       repo.findById.mockResolvedValue(call);
 
-      const result = await service.leaveCall('call-1', 'p1');
+      const result = await service.leaveCall('call-1', 'p1', S);
 
       expect(result.status).toBe(CallStatus.ENDED);
       expect(repo.save).not.toHaveBeenCalled();
@@ -347,9 +366,14 @@ describe('CallService', () => {
       const call = makeCall({ status: CallStatus.ACCEPTED, activeParticipants: ['caller'] });
       repo.findById.mockResolvedValue(call);
 
-      await service.leaveCall('call-1', 'p1');
+      await service.leaveCall('call-1', 'p1', S);
 
       expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('throws ForbiddenException when sessionId does not match call.sessionId', async () => {
+      repo.findById.mockResolvedValue(makeCall({ status: CallStatus.ACCEPTED }));
+      await expect(service.leaveCall('call-1', 'p1', 'other-session')).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -359,7 +383,7 @@ describe('CallService', () => {
       const call = makeCall({ status: CallStatus.ACCEPTED, participants: ['p1'] });
       repo.findById.mockResolvedValue(call);
 
-      await service.joinCall('call-1', 'p2');
+      await service.joinCall('call-1', 'p2', S);
 
       expect(call.participants).toContain('p2');
       expect(call.activeParticipants).toContain('p2');
@@ -369,19 +393,24 @@ describe('CallService', () => {
       const call = makeCall({ status: CallStatus.ACCEPTED });
       repo.findById.mockResolvedValue(call);
 
-      await service.joinCall('call-1', 'p1');
+      await service.joinCall('call-1', 'p1', S);
 
       expect(gateway.sendUserJoined).toHaveBeenCalled();
     });
 
     it('throws BadRequestException when call is not ACCEPTED', async () => {
       repo.findById.mockResolvedValue(makeCall({ status: CallStatus.RINGING }));
-      await expect(service.joinCall('call-1', 'p1')).rejects.toThrow(BadRequestException);
+      await expect(service.joinCall('call-1', 'p1', S)).rejects.toThrow(BadRequestException);
     });
 
     it('throws NotFoundException when call does not exist', async () => {
       repo.findById.mockResolvedValue(null);
-      await expect(service.joinCall('missing', 'p1')).rejects.toThrow(NotFoundException);
+      await expect(service.joinCall('missing', 'p1', S)).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws ForbiddenException when sessionId does not match call.sessionId', async () => {
+      repo.findById.mockResolvedValue(makeCall({ status: CallStatus.ACCEPTED }));
+      await expect(service.joinCall('call-1', 'p1', 'other-session')).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -391,7 +420,7 @@ describe('CallService', () => {
       const call = makeCall({ status: CallStatus.ACCEPTED, activeParticipants: ['caller'] });
       repo.findById.mockResolvedValue(call);
 
-      await service.inviteToCall('call-1', 'caller', ['p3']);
+      await service.inviteToCall('call-1', 'caller', S, ['p3']);
 
       expect(call.participants).toContain('p3');
       expect(gateway.sendIncomingCall).toHaveBeenCalledWith('p3', expect.any(Object));
@@ -402,7 +431,7 @@ describe('CallService', () => {
       const call = makeCall({ status: CallStatus.ACCEPTED, participants: ['p1'], activeParticipants: ['caller'] });
       repo.findById.mockResolvedValue(call);
 
-      await service.inviteToCall('call-1', 'caller', ['p1']);
+      await service.inviteToCall('call-1', 'caller', S, ['p1']);
 
       expect(gateway.sendIncomingCall).not.toHaveBeenCalled();
     });
@@ -411,12 +440,12 @@ describe('CallService', () => {
       const call = makeCall({ status: CallStatus.ACCEPTED, activeParticipants: ['caller'] });
       repo.findById.mockResolvedValue(call);
 
-      await expect(service.inviteToCall('call-1', 'outsider', ['p3'])).rejects.toThrow(BadRequestException);
+      await expect(service.inviteToCall('call-1', 'outsider', S, ['p3'])).rejects.toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when call is not active', async () => {
       repo.findById.mockResolvedValue(makeCall({ status: CallStatus.ENDED }));
-      await expect(service.inviteToCall('call-1', 'caller', ['p3'])).rejects.toThrow(BadRequestException);
+      await expect(service.inviteToCall('call-1', 'caller', S, ['p3'])).rejects.toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when an invitee is already in another call', async () => {
@@ -424,7 +453,13 @@ describe('CallService', () => {
       repo.findById.mockResolvedValue(call);
       repo.findActiveCall.mockResolvedValueOnce(makeCall({ callerId: 'p3' }));
 
-      await expect(service.inviteToCall('call-1', 'caller', ['p3'])).rejects.toThrow(BadRequestException);
+      await expect(service.inviteToCall('call-1', 'caller', S, ['p3'])).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws ForbiddenException when sessionId does not match call.sessionId', async () => {
+      const call = makeCall({ status: CallStatus.ACCEPTED, activeParticipants: ['caller'] });
+      repo.findById.mockResolvedValue(call);
+      await expect(service.inviteToCall('call-1', 'caller', 'other-session', ['p3'])).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -478,7 +513,7 @@ describe('CallService', () => {
       repo.findById.mockResolvedValue(call);
       mediasoupService.closeUserResources.mockResolvedValue(['prod-1', 'prod-2']);
 
-      await service.leaveCall('call-1', 'p1');
+      await service.leaveCall('call-1', 'p1', S);
 
       expect(gateway.broadcastToCall).toHaveBeenCalledWith('call-1', 'ms:producer-closed', { producerId: 'prod-1' });
       expect(gateway.broadcastToCall).toHaveBeenCalledWith('call-1', 'ms:producer-closed', { producerId: 'prod-2' });

@@ -4,6 +4,7 @@ import { CallStatus } from '../../src/calls/enum/callStatusEnum';
 
 const makeCall = (overrides: Partial<Call> = {}): Call => ({
   id: 'call-1',
+  sessionId: 'session-1',
   callerId: 'user-1',
   participants: ['user-2'],
   activeParticipants: ['user-1'],
@@ -126,6 +127,41 @@ describe('CallRepository', () => {
 
     it('returns an empty array when no calls exist', async () => {
       expect(await repo.findAll()).toEqual([]);
+    });
+  });
+
+  describe('findInProgressForSession', () => {
+    it('returns the ACCEPTED call for the given session', async () => {
+      await repo.save(
+        makeCall({ id: 'c1', sessionId: 'session-A', status: CallStatus.ACCEPTED }),
+      );
+      const found = await repo.findInProgressForSession('session-A');
+      expect(found?.id).toBe('c1');
+    });
+
+    it('does not return calls from other sessions', async () => {
+      await repo.save(
+        makeCall({ id: 'c1', sessionId: 'session-A', status: CallStatus.ACCEPTED }),
+      );
+      expect(await repo.findInProgressForSession('session-B')).toBeNull();
+    });
+
+    it('ignores RINGING calls', async () => {
+      await repo.save(
+        makeCall({ id: 'c1', sessionId: 'session-A', status: CallStatus.RINGING }),
+      );
+      expect(await repo.findInProgressForSession('session-A')).toBeNull();
+    });
+
+    it('ignores ENDED calls', async () => {
+      await repo.save(
+        makeCall({ id: 'c1', sessionId: 'session-A', status: CallStatus.ENDED }),
+      );
+      expect(await repo.findInProgressForSession('session-A')).toBeNull();
+    });
+
+    it('returns null when the store is empty', async () => {
+      expect(await repo.findInProgressForSession('session-X')).toBeNull();
     });
   });
 });
