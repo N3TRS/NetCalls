@@ -6,8 +6,11 @@ import { MediasoupService } from '../../src/calls/mediasoup/mediasoup.service';
 import { Call } from '../../src/calls/entities/call.entity';
 import { CallStatus } from '../../src/calls/enum/callStatusEnum';
 
+const S = 'session-1';
+
 const makeCall = (overrides: Partial<Call> = {}): Call => ({
   id: 'call-1',
+  sessionId: S,
   callerId: 'caller',
   participants: ['p1'],
   activeParticipants: ['caller'],
@@ -18,19 +21,29 @@ const makeCall = (overrides: Partial<Call> = {}): Call => ({
   ...overrides,
 });
 
+const makeSocket = (id: string) => ({
+  id,
+  join: jest.fn(),
+  leave: jest.fn(),
+  emit: jest.fn(),
+  to: jest.fn().mockReturnValue({ emit: jest.fn() }),
+});
+
 describe('CallGateway', () => {
   let gateway: CallGateway;
-  let emitSpy: jest.Mock;
-  let mockSocket: any;
+  let serverEmits: Array<{ target: string; event: string; payload: any }>;
+  let mockSocket: ReturnType<typeof makeSocket>;
   let mockRepo: any;
   let mockCallService: any;
   let mockMediasoupService: any;
 
   beforeEach(async () => {
-    emitSpy = jest.fn();
+    serverEmits = [];
 
     mockRepo = {
       findActiveCall: jest.fn().mockResolvedValue(null),
+      findInProgressForSession: jest.fn().mockResolvedValue(null),
+      findById: jest.fn().mockResolvedValue(makeCall()),
       findAll: jest.fn().mockResolvedValue([]),
     };
 
@@ -49,13 +62,7 @@ describe('CallGateway', () => {
       resumeConsumer: jest.fn().mockResolvedValue(undefined),
     };
 
-    mockSocket = {
-      id: 'socket-1',
-      join: jest.fn(),
-      leave: jest.fn(),
-      emit: jest.fn(),
-      to: jest.fn().mockReturnValue({ emit: jest.fn() }),
-    };
+    mockSocket = makeSocket('socket-1');
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -67,394 +74,565 @@ describe('CallGateway', () => {
     }).compile();
 
     gateway = module.get<CallGateway>(CallGateway);
-    gateway.server = { to: jest.fn().mockReturnValue({ emit: emitSpy }) } as any;
+    gateway.server = {
+      to: jest.fn().mockImplementation((target: string) => ({
+        emit: (event: string, payload: any) =>
+          serverEmits.push({ target, event, payload }),
+      })),
+    } as any;
   });
 
-  const registerUser = (userId: string, socket = mockSocket) => {
-    gateway.handleRegister({ userId }, socket);
-  };
-
+  const registerUser = (
+    userId: string,
+    sessionId: string = S,
+    socket: any = mockSocket,
+  ) => gateway.handleRegister({ userId, sessionId }, socket);
 
   describe('handleConnection', () => {
     it('does not throw on new connection', () => {
-      expect(() => gateway.handleConnection(mockSocket)).not.toThrow();
+      expect(() => gateway.handleConnection(mockSocket as any)).not.toThrow();
     });
   });
 
   describe('handleDisconnect', () => {
     it('removes user registration on disconnect', () => {
       registerUser('alice');
-      gateway.handleDisconnect(mockSocket);
-      expect(gateway.isUserConnected('alice')).toBe(false);
+      gateway.handleDisconnect(mockSocket as any);
+      expect(gateway.isUserConnected('alice', S)).toBe(false);
     });
 
-    it('triggers leaveCall when user has an active call on disconnect', async () => {
+    it('triggers leaveCall when user has an active call in the same session on disconnect', async () => {
       registerUser('alice');
       mockRepo.findActiveCall.mockResolvedValueOnce(makeCall({ id: 'call-1' }));
-      gateway.handleDisconnect(mockSocket);
+      gateway.handleDisconnect(mockSocket as any);
       await new Promise((r) => setTimeout(r, 10));
-      expect(mockCallService.leaveCall).toHaveBeenCalledWith('call-1', 'alice');
+      expect(mockCallService.leaveCall).toHaveBeenCalledWith('call-1', 'alice', S);
+    });
+
+    it('does NOT trigger leaveCall when the active call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findActiveCall.mockResolvedValueOnce(
+        makeCall({ id: 'call-1', sessionId: 'other-session' }),
+      );
+      gateway.handleDisconnect(mockSocket as any);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(mockCallService.leaveCall).not.toHaveBeenCalled();
     });
 
     it('cleans up call room when last user disconnects', async () => {
       registerUser('alice');
-      await gateway.handleJoinCall({ callId: 'call-1', userId: 'alice' }, mockSocket);
-      gateway.handleDisconnect(mockSocket);
+      await gateway.handleJoinCall({ callId: 'call-1' }, mockSocket as any);
+      gateway.handleDisconnect(mockSocket as any);
       expect(gateway.getUsersInCall('call-1')).toHaveLength(0);
     });
 
     it('removes user from call room but keeps room when others remain', async () => {
-      const socket2 = { ...mockSocket, id: 'socket-2', emit: jest.fn() };
+      const socket2 = makeSocket('socket-2');
       registerUser('alice');
-      registerUser('bob', socket2 as any);
-      await gateway.handleJoinCall({ callId: 'call-1', userId: 'alice' }, mockSocket);
-      await gateway.handleJoinCall({ callId: 'call-1', userId: 'bob' }, socket2 as any);
-      gateway.handleDisconnect(mockSocket);
+      registerUser('bob', S, socket2);
+      await gateway.handleJoinCall({ callId: 'call-1' }, mockSocket as any);
+      await gateway.handleJoinCall({ callId: 'call-1' }, socket2 as any);
+      gateway.handleDisconnect(mockSocket as any);
       expect(gateway.getUsersInCall('call-1')).toContain('bob');
       expect(gateway.getUsersInCall('call-1')).not.toContain('alice');
     });
 
-    it('does nothing when socket has no registered user', () => {
-      expect(() => gateway.handleDisconnect(mockSocket)).not.toThrow();
+    it('keeps the user registered for the session when another tab of the same user is still open', async () => {
+      const tab2 = makeSocket('socket-tab2');
+      registerUser('alice', S, mockSocket);
+      registerUser('alice', S, tab2);
+      gateway.handleDisconnect(mockSocket as any);
+      expect(gateway.isUserConnected('alice', S)).toBe(true);
+      expect(mockCallService.leaveCall).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when socket has no registered ctx', () => {
+      expect(() => gateway.handleDisconnect(mockSocket as any)).not.toThrow();
     });
   });
 
-
   describe('handleRegister', () => {
     it('registers user and returns success response', () => {
-      const result = gateway.handleRegister({ userId: 'alice' }, mockSocket);
-      expect(result).toMatchObject({ success: true, userId: 'alice', socketId: 'socket-1' });
+      const result = gateway.handleRegister({ userId: 'alice', sessionId: S }, mockSocket as any);
+      expect(result).toMatchObject({ success: true, userId: 'alice', sessionId: S, socketId: 'socket-1' });
     });
 
-    it('accepts plain string as userId', () => {
-      const result = gateway.handleRegister('alice' as any, mockSocket);
-      expect(result.userId).toBe('alice');
+    it('returns error when userId is missing', () => {
+      const result = gateway.handleRegister({ sessionId: S } as any, mockSocket as any);
+      expect(result.success).toBe(false);
     });
 
-    it('returns error when userId is not provided', () => {
-      const result = gateway.handleRegister({} as any, mockSocket);
+    it('returns error when sessionId is missing', () => {
+      const result = gateway.handleRegister({ userId: 'alice' } as any, mockSocket as any);
       expect(result.success).toBe(false);
     });
 
     it('emits registered event to the socket', () => {
       registerUser('alice');
-      expect(mockSocket.emit).toHaveBeenCalledWith('registered', expect.objectContaining({ success: true }));
+      expect(mockSocket.emit).toHaveBeenCalledWith(
+        'registered',
+        expect.objectContaining({ success: true, sessionId: S }),
+      );
     });
 
-    it('updates socket mapping when user reconnects', () => {
-      const socket2 = { ...mockSocket, id: 'socket-2', emit: jest.fn() };
-      registerUser('alice');
-      gateway.handleRegister({ userId: 'alice' }, socket2 as any);
-      expect(gateway.isUserConnected('alice')).toBe(true);
+    it('tracks multiple sockets for the same user+session', () => {
+      const tab2 = makeSocket('socket-tab2');
+      registerUser('alice', S, mockSocket);
+      registerUser('alice', S, tab2);
+      expect(gateway.isUserConnected('alice', S)).toBe(true);
     });
 
-    it('emits call-in-progress when user reconnects to active call', async () => {
-      const activeCall = makeCall({ status: CallStatus.ACCEPTED });
-      mockRepo.findAll.mockResolvedValueOnce([activeCall]);
-      const socket2 = { ...mockSocket, id: 'socket-99', emit: jest.fn() };
-      gateway.handleRegister({ userId: 'outsider' }, socket2 as any);
+    it('emits call-in-progress only for an active call in the same session', async () => {
+      const activeCall = makeCall({ status: CallStatus.ACCEPTED, sessionId: S });
+      mockRepo.findInProgressForSession.mockResolvedValueOnce(activeCall);
+      const socket2 = makeSocket('socket-99');
+      gateway.handleRegister({ userId: 'outsider', sessionId: S }, socket2 as any);
       await new Promise((r) => setTimeout(r, 10));
       expect(socket2.emit).toHaveBeenCalledWith('call-in-progress', activeCall);
     });
+
+    it('does not emit call-in-progress when no active call exists in this session', async () => {
+      mockRepo.findInProgressForSession.mockResolvedValueOnce(null);
+      const socket2 = makeSocket('socket-99');
+      gateway.handleRegister({ userId: 'outsider', sessionId: S }, socket2 as any);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(socket2.emit).not.toHaveBeenCalledWith(
+        'call-in-progress',
+        expect.anything(),
+      );
+    });
+
+    it('does not emit call-in-progress to users already in the active call', async () => {
+      const activeCall = makeCall({
+        status: CallStatus.ACCEPTED,
+        activeParticipants: ['alice'],
+      });
+      mockRepo.findInProgressForSession.mockResolvedValueOnce(activeCall);
+      gateway.handleRegister({ userId: 'alice', sessionId: S }, mockSocket as any);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(mockSocket.emit).not.toHaveBeenCalledWith(
+        'call-in-progress',
+        expect.anything(),
+      );
+    });
   });
 
-
   describe('handleJoinCall', () => {
-    it('joins socket room and returns producers', async () => {
-      const result = await gateway.handleJoinCall({ callId: 'call-1', userId: 'alice' }, mockSocket);
+    it('joins socket room and returns producers when session matches', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall());
+      const result = await gateway.handleJoinCall({ callId: 'call-1' }, mockSocket as any);
       expect(mockSocket.join).toHaveBeenCalledWith('call:call-1');
-      expect(result).toMatchObject({ success: true, callId: 'call-1' });
+      expect(result).toMatchObject({ success: true, callId: 'call-1', userId: 'alice' });
+    });
+
+    it('returns Wrong session error when call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall({ sessionId: 'other-session' }));
+      const result = await gateway.handleJoinCall({ callId: 'call-1' }, mockSocket as any);
+      expect(result).toEqual({ error: 'Wrong session' });
+      expect(mockSocket.join).not.toHaveBeenCalled();
+    });
+
+    it('returns Not registered error when socket has no ctx', async () => {
+      const result = await gateway.handleJoinCall({ callId: 'call-1' }, mockSocket as any);
+      expect(result).toEqual({ error: 'Not registered' });
     });
 
     it('reuses existing room set on second join', async () => {
-      await gateway.handleJoinCall({ callId: 'call-1', userId: 'alice' }, mockSocket);
-      await gateway.handleJoinCall({ callId: 'call-1', userId: 'bob' }, mockSocket);
-      expect(gateway.getUsersInCall('call-1')).toContain('alice');
-      expect(gateway.getUsersInCall('call-1')).toContain('bob');
+      registerUser('alice', S, mockSocket);
+      const socket2 = makeSocket('socket-2');
+      registerUser('bob', S, socket2);
+      mockRepo.findById.mockResolvedValue(makeCall());
+      await gateway.handleJoinCall({ callId: 'call-1' }, mockSocket as any);
+      await gateway.handleJoinCall({ callId: 'call-1' }, socket2 as any);
+      expect(gateway.getUsersInCall('call-1')).toEqual(expect.arrayContaining(['alice', 'bob']));
     });
   });
 
   describe('handleLeaveCall', () => {
-    it('leaves socket room and removes user from tracking', async () => {
-      await gateway.handleJoinCall({ callId: 'call-1', userId: 'alice' }, mockSocket);
-      const result = gateway.handleLeaveCall({ callId: 'call-1', userId: 'alice' }, mockSocket);
+    it('leaves socket room when session matches', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
+      await gateway.handleJoinCall({ callId: 'call-1' }, mockSocket as any);
+      const result = await gateway.handleLeaveCall({ callId: 'call-1' }, mockSocket as any);
       expect(mockSocket.leave).toHaveBeenCalledWith('call:call-1');
-      expect(result.success).toBe(true);
+      expect(result).toMatchObject({ success: true });
+    });
+
+    it('returns Wrong session error when call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall({ sessionId: 'other-session' }));
+      const result = await gateway.handleLeaveCall({ callId: 'call-1' }, mockSocket as any);
+      expect(result).toEqual({ error: 'Wrong session' });
     });
 
     it('removes callRoom entry when last user leaves', async () => {
-      await gateway.handleJoinCall({ callId: 'call-1', userId: 'alice' }, mockSocket);
-      gateway.handleLeaveCall({ callId: 'call-1', userId: 'alice' }, mockSocket);
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
+      await gateway.handleJoinCall({ callId: 'call-1' }, mockSocket as any);
+      await gateway.handleLeaveCall({ callId: 'call-1' }, mockSocket as any);
       expect(gateway.getUsersInCall('call-1')).toHaveLength(0);
     });
   });
 
-
   describe('handlePing', () => {
-    it('returns pong with timestamp', () => {
+    it('returns pong with timestamp and userId from ctx', () => {
       registerUser('alice');
-      const result = gateway.handlePing(mockSocket);
+      const result = gateway.handlePing(mockSocket as any);
       expect(result.pong).toBe(true);
       expect(typeof result.timestamp).toBe('number');
+      expect(result.userId).toBe('alice');
     });
   });
 
-
   describe('handleGetRtpCapabilities', () => {
-    it('returns rtp capabilities for a call', async () => {
-      const result = await gateway.handleGetRtpCapabilities({ callId: 'call-1' });
+    it('returns rtp capabilities when session matches', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
+      const result = await gateway.handleGetRtpCapabilities({ callId: 'call-1' }, mockSocket as any);
       expect(mockMediasoupService.ensureRoom).toHaveBeenCalledWith('call-1');
       expect(result).toEqual({ codecs: [] });
     });
 
+    it('returns Wrong session error when call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall({ sessionId: 'other-session' }));
+      const result = await gateway.handleGetRtpCapabilities({ callId: 'call-1' }, mockSocket as any);
+      expect(result).toEqual({ error: 'Wrong session' });
+    });
+
     it('returns error when mediasoup throws', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
       mockMediasoupService.ensureRoom.mockRejectedValueOnce(new Error('room error'));
-      const result = await gateway.handleGetRtpCapabilities({ callId: 'call-1' });
+      const result = await gateway.handleGetRtpCapabilities({ callId: 'call-1' }, mockSocket as any);
       expect(result).toEqual({ error: 'room error' });
     });
   });
 
   describe('handleCreateTransport', () => {
-    it('returns error when user is not registered', async () => {
-      const result = await gateway.handleCreateTransport({ callId: 'call-1' }, mockSocket);
+    it('returns Not registered when user is not registered', async () => {
+      const result = await gateway.handleCreateTransport({ callId: 'call-1' }, mockSocket as any);
       expect(result).toEqual({ error: 'Not registered' });
     });
 
-    it('creates transport for registered user', async () => {
+    it('creates transport for registered user when session matches', async () => {
       registerUser('alice');
-      const result = await gateway.handleCreateTransport({ callId: 'call-1' }, mockSocket);
+      mockRepo.findById.mockResolvedValue(makeCall());
+      const result = await gateway.handleCreateTransport({ callId: 'call-1' }, mockSocket as any);
       expect(mockMediasoupService.createTransport).toHaveBeenCalledWith('call-1', 'alice');
       expect(result).toEqual({ id: 'transport-1' });
     });
 
+    it('returns Wrong session error when call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall({ sessionId: 'other-session' }));
+      const result = await gateway.handleCreateTransport({ callId: 'call-1' }, mockSocket as any);
+      expect(result).toEqual({ error: 'Wrong session' });
+    });
+
     it('returns error when transport creation fails', async () => {
       registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
       mockMediasoupService.createTransport.mockRejectedValueOnce(new Error('transport error'));
-      const result = await gateway.handleCreateTransport({ callId: 'call-1' }, mockSocket);
+      const result = await gateway.handleCreateTransport({ callId: 'call-1' }, mockSocket as any);
       expect(result).toEqual({ error: 'transport error' });
     });
   });
 
   describe('handleConnectTransport', () => {
-    it('connects transport and returns success', async () => {
-      const result = await gateway.handleConnectTransport({
-        callId: 'call-1',
-        transportId: 'transport-1',
-        dtlsParameters: {},
-      });
+    it('connects transport when session matches', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
+      const result = await gateway.handleConnectTransport(
+        { callId: 'call-1', transportId: 'transport-1', dtlsParameters: {} },
+        mockSocket as any,
+      );
       expect(mockMediasoupService.connectTransport).toHaveBeenCalledWith('call-1', 'transport-1', {});
       expect(result).toEqual({ success: true });
     });
 
+    it('returns Wrong session error when call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall({ sessionId: 'other-session' }));
+      const result = await gateway.handleConnectTransport(
+        { callId: 'call-1', transportId: 'transport-1', dtlsParameters: {} },
+        mockSocket as any,
+      );
+      expect(result).toEqual({ error: 'Wrong session' });
+    });
+
     it('returns error when connect fails', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
       mockMediasoupService.connectTransport.mockRejectedValueOnce(new Error('connect error'));
-      const result = await gateway.handleConnectTransport({
-        callId: 'call-1',
-        transportId: 'transport-1',
-        dtlsParameters: {},
-      });
+      const result = await gateway.handleConnectTransport(
+        { callId: 'call-1', transportId: 'transport-1', dtlsParameters: {} },
+        mockSocket as any,
+      );
       expect(result).toEqual({ error: 'connect error' });
     });
   });
 
   describe('handleProduce', () => {
-    it('returns error when user is not registered', async () => {
+    it('returns Not registered when user is not registered', async () => {
       const result = await gateway.handleProduce(
         { callId: 'call-1', transportId: 'transport-1', kind: 'audio', rtpParameters: {} },
-        mockSocket,
+        mockSocket as any,
       );
       expect(result).toEqual({ error: 'Not registered' });
     });
 
-    it('produces and notifies call room', async () => {
+    it('produces and notifies call room when session matches', async () => {
       registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
       const toEmit = jest.fn();
-      mockSocket.to = jest.fn().mockReturnValue({ emit: toEmit });
+      (mockSocket.to as jest.Mock).mockReturnValue({ emit: toEmit });
       const result = await gateway.handleProduce(
         { callId: 'call-1', transportId: 'transport-1', kind: 'audio', rtpParameters: {} },
-        mockSocket,
+        mockSocket as any,
       );
       expect(result).toEqual({ producerId: 'producer-1' });
-      expect(toEmit).toHaveBeenCalledWith('ms:new-producer', expect.objectContaining({ userId: 'alice', producerId: 'producer-1' }));
+      expect(toEmit).toHaveBeenCalledWith(
+        'ms:new-producer',
+        expect.objectContaining({ userId: 'alice', producerId: 'producer-1' }),
+      );
+    });
+
+    it('returns Wrong session error when call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall({ sessionId: 'other-session' }));
+      const result = await gateway.handleProduce(
+        { callId: 'call-1', transportId: 'transport-1', kind: 'audio', rtpParameters: {} },
+        mockSocket as any,
+      );
+      expect(result).toEqual({ error: 'Wrong session' });
     });
 
     it('returns error when produce fails', async () => {
       registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
       mockMediasoupService.produce.mockRejectedValueOnce(new Error('produce error'));
       const result = await gateway.handleProduce(
         { callId: 'call-1', transportId: 'transport-1', kind: 'audio', rtpParameters: {} },
-        mockSocket,
+        mockSocket as any,
       );
       expect(result).toEqual({ error: 'produce error' });
     });
   });
 
   describe('handleGetProducers', () => {
-    it('returns producers for a call', async () => {
+    it('returns producers when session matches', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
       mockMediasoupService.getProducers.mockResolvedValueOnce([{ id: 'p1' }]);
-      const result = await gateway.handleGetProducers({ callId: 'call-1' });
+      const result = await gateway.handleGetProducers({ callId: 'call-1' }, mockSocket as any);
       expect(result).toEqual({ producers: [{ id: 'p1' }] });
+    });
+
+    it('returns Wrong session error when call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall({ sessionId: 'other-session' }));
+      const result = await gateway.handleGetProducers({ callId: 'call-1' }, mockSocket as any);
+      expect(result).toEqual({ error: 'Wrong session' });
     });
   });
 
   describe('handleConsume', () => {
-    it('returns error when user is not registered', async () => {
+    it('returns Not registered when user is not registered', async () => {
       const result = await gateway.handleConsume(
         { callId: 'call-1', transportId: 'transport-1', producerId: 'p1', rtpCapabilities: {} },
-        mockSocket,
+        mockSocket as any,
       );
       expect(result).toEqual({ error: 'Not registered' });
     });
 
-    it('consumes and returns consumer info', async () => {
+    it('consumes and returns consumer info when session matches', async () => {
       registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
       const result = await gateway.handleConsume(
         { callId: 'call-1', transportId: 'transport-1', producerId: 'p1', rtpCapabilities: {} },
-        mockSocket,
+        mockSocket as any,
       );
       expect(result).toEqual({ id: 'consumer-1', kind: 'audio' });
     });
 
+    it('returns Wrong session error when call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall({ sessionId: 'other-session' }));
+      const result = await gateway.handleConsume(
+        { callId: 'call-1', transportId: 'transport-1', producerId: 'p1', rtpCapabilities: {} },
+        mockSocket as any,
+      );
+      expect(result).toEqual({ error: 'Wrong session' });
+    });
+
     it('returns error when consume fails', async () => {
       registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
       mockMediasoupService.consume.mockRejectedValueOnce(new Error('consume error'));
       const result = await gateway.handleConsume(
         { callId: 'call-1', transportId: 'transport-1', producerId: 'p1', rtpCapabilities: {} },
-        mockSocket,
+        mockSocket as any,
       );
       expect(result).toEqual({ error: 'consume error' });
     });
   });
 
   describe('handleMuteChanged', () => {
-    it('broadcasts mute change to call room', () => {
+    it('broadcasts mute change to call room when session matches', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
       const toEmit = jest.fn();
-      mockSocket.to = jest.fn().mockReturnValue({ emit: toEmit });
-      gateway.handleMuteChanged({ callId: 'call-1', userId: 'alice', isMuted: true }, mockSocket);
+      (mockSocket.to as jest.Mock).mockReturnValue({ emit: toEmit });
+      await gateway.handleMuteChanged({ callId: 'call-1', isMuted: true }, mockSocket as any);
       expect(mockSocket.to).toHaveBeenCalledWith('call:call-1');
       expect(toEmit).toHaveBeenCalledWith('user:mute-changed', { userId: 'alice', isMuted: true });
+    });
+
+    it('does nothing when call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall({ sessionId: 'other-session' }));
+      const toEmit = jest.fn();
+      (mockSocket.to as jest.Mock).mockReturnValue({ emit: toEmit });
+      await gateway.handleMuteChanged({ callId: 'call-1', isMuted: true }, mockSocket as any);
+      expect(toEmit).not.toHaveBeenCalled();
     });
   });
 
   describe('handleResumeConsumer', () => {
-    it('resumes consumer and returns success', async () => {
-      const result = await gateway.handleResumeConsumer({ callId: 'call-1', consumerId: 'consumer-1' });
+    it('resumes consumer when session matches', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
+      const result = await gateway.handleResumeConsumer(
+        { callId: 'call-1', consumerId: 'consumer-1' },
+        mockSocket as any,
+      );
       expect(mockMediasoupService.resumeConsumer).toHaveBeenCalledWith('call-1', 'consumer-1');
       expect(result).toEqual({ success: true });
     });
 
+    it('returns Wrong session error when call belongs to a different session', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValueOnce(makeCall({ sessionId: 'other-session' }));
+      const result = await gateway.handleResumeConsumer(
+        { callId: 'call-1', consumerId: 'consumer-1' },
+        mockSocket as any,
+      );
+      expect(result).toEqual({ error: 'Wrong session' });
+    });
+
     it('returns error when resume fails', async () => {
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
       mockMediasoupService.resumeConsumer.mockRejectedValueOnce(new Error('resume error'));
-      const result = await gateway.handleResumeConsumer({ callId: 'call-1', consumerId: 'consumer-1' });
+      const result = await gateway.handleResumeConsumer(
+        { callId: 'call-1', consumerId: 'consumer-1' },
+        mockSocket as any,
+      );
       expect(result).toEqual({ error: 'resume error' });
     });
   });
 
-
   describe('handleWebRTCOffer', () => {
-    it('relays offer to target user socket', () => {
-      const targetSocket = { ...mockSocket, id: 'socket-2', emit: jest.fn() };
-      registerUser('alice');
-      registerUser('bob', targetSocket as any);
+    it('relays offer to target user socket in the same session', () => {
+      const targetSocket = makeSocket('socket-2');
+      registerUser('alice', S, mockSocket);
+      registerUser('bob', S, targetSocket);
+      gateway.handleWebRTCOffer({ to: 'bob', signal: {} as any }, mockSocket as any);
+      const offerEmit = serverEmits.find((e) => e.event === 'webrtc:offer');
+      expect(offerEmit?.target).toBe('socket-2');
+      expect(offerEmit?.payload).toEqual(expect.objectContaining({ from: 'alice' }));
+    });
 
-      gateway.handleWebRTCOffer({ to: 'bob', signal: {} as any }, mockSocket);
-
-      expect(emitSpy).toHaveBeenCalledWith('webrtc:offer', expect.objectContaining({ from: 'alice' }));
+    it('does not relay across sessions', () => {
+      const targetSocket = makeSocket('socket-2');
+      registerUser('alice', S, mockSocket);
+      registerUser('bob', 'other-session', targetSocket);
+      gateway.handleWebRTCOffer({ to: 'bob', signal: {} as any }, mockSocket as any);
+      expect(serverEmits.find((e) => e.event === 'webrtc:offer')).toBeUndefined();
     });
 
     it('does nothing when target user is not connected', () => {
       registerUser('alice');
-      expect(() => gateway.handleWebRTCOffer({ to: 'offline', signal: {} as any }, mockSocket)).not.toThrow();
+      expect(() =>
+        gateway.handleWebRTCOffer({ to: 'offline', signal: {} as any }, mockSocket as any),
+      ).not.toThrow();
     });
   });
 
   describe('handleWebRTCAnswer', () => {
-    it('relays answer to target user socket', () => {
-      const targetSocket = { ...mockSocket, id: 'socket-2', emit: jest.fn() };
-      registerUser('alice');
-      registerUser('bob', targetSocket as any);
-
-      gateway.handleWebRTCAnswer({ to: 'bob', signal: {} as any }, mockSocket);
-
-      expect(emitSpy).toHaveBeenCalledWith('webrtc:answer', expect.objectContaining({ from: 'alice' }));
+    it('relays answer to target user socket in the same session', () => {
+      const targetSocket = makeSocket('socket-2');
+      registerUser('alice', S, mockSocket);
+      registerUser('bob', S, targetSocket);
+      gateway.handleWebRTCAnswer({ to: 'bob', signal: {} as any }, mockSocket as any);
+      const answerEmit = serverEmits.find((e) => e.event === 'webrtc:answer');
+      expect(answerEmit?.payload).toEqual(expect.objectContaining({ from: 'alice' }));
     });
   });
 
   describe('handleWebRTCIceCandidate', () => {
-    it('relays ice candidate to target user', () => {
-      const targetSocket = { ...mockSocket, id: 'socket-2', emit: jest.fn() };
-      registerUser('alice');
-      registerUser('bob', targetSocket as any);
-
-      gateway.handleWebRTCIceCandidate({ to: 'bob', signal: {} as any }, mockSocket);
-
-      expect(emitSpy).toHaveBeenCalledWith('webrtc:ice-candidate', expect.objectContaining({ from: 'alice' }));
+    it('relays ice candidate to target user in the same session', () => {
+      const targetSocket = makeSocket('socket-2');
+      registerUser('alice', S, mockSocket);
+      registerUser('bob', S, targetSocket);
+      gateway.handleWebRTCIceCandidate({ to: 'bob', signal: {} as any }, mockSocket as any);
+      const iceEmit = serverEmits.find((e) => e.event === 'webrtc:ice-candidate');
+      expect(iceEmit?.payload).toEqual(expect.objectContaining({ from: 'alice' }));
     });
   });
 
-
   describe('sendIncomingCall', () => {
-    it('emits incoming-call to connected user', () => {
+    it('emits incoming-call to all sockets of the user in the matching session', () => {
       registerUser('alice');
       gateway.sendIncomingCall('alice', makeCall());
-      expect(emitSpy).toHaveBeenCalledWith('incoming-call', expect.any(Object));
+      expect(serverEmits.find((e) => e.event === 'incoming-call')).toBeDefined();
     });
 
-    it('does nothing when user is not connected', () => {
-      gateway.sendIncomingCall('offline', makeCall());
-      expect(emitSpy).not.toHaveBeenCalled();
+    it('does not emit when the user is not connected in the call session', () => {
+      registerUser('alice', 'other-session');
+      gateway.sendIncomingCall('alice', makeCall());
+      expect(serverEmits.find((e) => e.event === 'incoming-call')).toBeUndefined();
     });
   });
 
   describe('sendCallAccepted', () => {
-    it('emits call-accepted to connected user', () => {
+    it('emits call-accepted to user in the matching session', () => {
       registerUser('alice');
       gateway.sendCallAccepted('alice', makeCall());
-      expect(emitSpy).toHaveBeenCalledWith('call-accepted', expect.any(Object));
+      expect(serverEmits.find((e) => e.event === 'call-accepted')).toBeDefined();
     });
 
-    it('does nothing when user is not connected', () => {
-      gateway.sendCallAccepted('offline', makeCall());
-      expect(emitSpy).not.toHaveBeenCalled();
+    it('does not emit when user is in a different session', () => {
+      registerUser('alice', 'other-session');
+      gateway.sendCallAccepted('alice', makeCall());
+      expect(serverEmits.find((e) => e.event === 'call-accepted')).toBeUndefined();
     });
   });
 
   describe('sendCallEnded', () => {
-    it('emits call-ended to connected user', () => {
+    it('emits call-ended to user in the matching session', () => {
       registerUser('alice');
       gateway.sendCallEnded('alice', makeCall());
-      expect(emitSpy).toHaveBeenCalledWith('call-ended', expect.any(Object));
-    });
-
-    it('does nothing when user is not connected', () => {
-      gateway.sendCallEnded('offline', makeCall());
-      expect(emitSpy).not.toHaveBeenCalled();
+      expect(serverEmits.find((e) => e.event === 'call-ended')).toBeDefined();
     });
   });
 
   describe('sendCallRejected', () => {
-    it('emits call-rejected to connected user', () => {
+    it('emits call-rejected to user in the matching session', () => {
       registerUser('alice');
       gateway.sendCallRejected('alice', makeCall());
-      expect(emitSpy).toHaveBeenCalledWith('call-rejected', expect.any(Object));
-    });
-
-    it('does nothing when user is not connected', () => {
-      gateway.sendCallRejected('offline', makeCall());
-      expect(emitSpy).not.toHaveBeenCalled();
+      expect(serverEmits.find((e) => e.event === 'call-rejected')).toBeDefined();
     });
   });
 
   describe('sendCallMissed', () => {
-    it('emits call-missed to connected user', () => {
+    it('emits call-missed to user in the matching session', () => {
       registerUser('alice');
       gateway.sendCallMissed('alice', makeCall());
-      expect(emitSpy).toHaveBeenCalledWith('call-missed', expect.any(Object));
-    });
-
-    it('does nothing when user is not connected', () => {
-      gateway.sendCallMissed('offline', makeCall());
-      expect(emitSpy).not.toHaveBeenCalled();
+      expect(serverEmits.find((e) => e.event === 'call-missed')).toBeDefined();
     });
   });
 
@@ -462,7 +640,8 @@ describe('CallGateway', () => {
     it('emits user-left with leaving user info', () => {
       registerUser('alice');
       gateway.sendUserLeft('alice', makeCall(), 'bob');
-      expect(emitSpy).toHaveBeenCalledWith('user-left', expect.objectContaining({ userId: 'bob' }));
+      const emit = serverEmits.find((e) => e.event === 'user-left');
+      expect(emit?.payload).toEqual(expect.objectContaining({ userId: 'bob' }));
     });
   });
 
@@ -470,7 +649,8 @@ describe('CallGateway', () => {
     it('emits user-joined with joining user info', () => {
       registerUser('alice');
       gateway.sendUserJoined('alice', makeCall(), 'bob');
-      expect(emitSpy).toHaveBeenCalledWith('user-joined', expect.objectContaining({ userId: 'bob' }));
+      const emit = serverEmits.find((e) => e.event === 'user-joined');
+      expect(emit?.payload).toEqual(expect.objectContaining({ userId: 'bob' }));
     });
   });
 
@@ -478,25 +658,32 @@ describe('CallGateway', () => {
     it('broadcasts event to entire call room', () => {
       gateway.broadcastToCall('call-1', 'ms:producer-closed', { producerId: 'p1' });
       expect(gateway.server.to).toHaveBeenCalledWith('call:call-1');
-      expect(emitSpy).toHaveBeenCalledWith('ms:producer-closed', { producerId: 'p1' });
+      const emit = serverEmits.find((e) => e.event === 'ms:producer-closed');
+      expect(emit?.payload).toEqual({ producerId: 'p1' });
     });
   });
 
-
   describe('isUserConnected', () => {
-    it('returns true for registered user', () => {
+    it('returns true for registered user in the given session', () => {
       registerUser('alice');
-      expect(gateway.isUserConnected('alice')).toBe(true);
+      expect(gateway.isUserConnected('alice', S)).toBe(true);
+    });
+
+    it('returns false for a user registered in a different session', () => {
+      registerUser('alice', 'other-session');
+      expect(gateway.isUserConnected('alice', S)).toBe(false);
     });
 
     it('returns false for unknown user', () => {
-      expect(gateway.isUserConnected('nobody')).toBe(false);
+      expect(gateway.isUserConnected('nobody', S)).toBe(false);
     });
   });
 
   describe('getUsersInCall', () => {
     it('returns list of users in call room', async () => {
-      await gateway.handleJoinCall({ callId: 'call-1', userId: 'alice' }, mockSocket);
+      registerUser('alice');
+      mockRepo.findById.mockResolvedValue(makeCall());
+      await gateway.handleJoinCall({ callId: 'call-1' }, mockSocket as any);
       expect(gateway.getUsersInCall('call-1')).toContain('alice');
     });
 
