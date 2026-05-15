@@ -10,7 +10,7 @@ export class MetricsInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const req = context.switchToHttp().getRequest();
 
-    if (req.path === '/metrics') {
+    if (req.path === '/metrics' || req.url === '/metrics' || req.url?.startsWith('/metrics')) {
       return next.handle();
     }
 
