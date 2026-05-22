@@ -1,335 +1,250 @@
-# NetCalls — Backend de llamadas en tiempo real
+# 📞 NetCalls — Microservicio de Llamadas de Voz/Video en Tiempo Real
 
-Backend del microservicio **NetCalls**, responsable de gestionar llamadas de voz/video en tiempo real entre múltiples usuarios dentro del ecosistema **OMNICODE**.
+<div align="center">
 
-Implementado con **NestJS + TypeScript**, expone una API REST protegida por JWT, un gateway WebSocket con **Socket.IO** para notificaciones en tiempo real, señalización **WebRTC** peer-to-peer, y un servidor de medios **Mediasoup SFU** para enrutamiento de audio/video.
+### 🛠️ Stack Tecnológico
 
+![TypeScript](https://img.shields.io/badge/TypeScript-5.7.3-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![NestJS](https://img.shields.io/badge/NestJS-11.0.1-E0234E?style=for-the-badge&logo=nestjs&logoColor=white)
+![Socket.IO](https://img.shields.io/badge/Socket.IO-4.8.3-010101?style=for-the-badge&logo=socketdotio&logoColor=white)
+![WebRTC](https://img.shields.io/badge/WebRTC-P2P-333333?style=for-the-badge&logo=webrtc&logoColor=white)
 
-## Tabla de contenidos
+### ☁️ Infraestructura & Calidad
 
-- [Descripción](#descripción)
-- [Stack tecnológico](#stack-tecnológico)
-- [Arquitectura](#arquitectura)
-- [Estructura del proyecto](#estructura-del-proyecto)
-- [Instalación](#instalación)
-- [Ejecución](#ejecución)
-- [API REST](#api-rest)
-- [WebSocket — Eventos de llamada](#websocket--eventos-de-llamada)
-- [WebSocket — Señalización Mediasoup SFU](#websocket--señalización-mediasoup-sfu)
-- [Estados de llamada](#estados-de-llamada)
-- [Testing](#testing)
+![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI/CD-2088FF?style=for-the-badge&logo=github-actions&logoColor=white)
+![SonarQube](https://img.shields.io/badge/SonarQube-Quality-4E9BCD?style=for-the-badge&logo=sonarqube&logoColor=white)
+![Azure](https://img.shields.io/badge/Azure-App_Service-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)
+![Prometheus](https://img.shields.io/badge/Prometheus-Metrics-E6522C?style=for-the-badge&logo=prometheus&logoColor=white)
 
----
+### 🏗️ Arquitectura
 
-## Descripción
+![Modular](https://img.shields.io/badge/Architecture-Modular_NestJS-blueviolet?style=for-the-badge)
+![Mediasoup](https://img.shields.io/badge/Mediasoup-SFU-FF6B35?style=for-the-badge)
+![REST API](https://img.shields.io/badge/REST-API-009688?style=for-the-badge)
 
-NetCalls permite:
-
-- Crear llamadas grupales entre un `callerId` y múltiples `participants`.
-- Aceptar o rechazar llamadas individualmente.
-- Finalizar o abandonar una llamada activa.
-- Invitar nuevos usuarios a una llamada en curso.
-- Notificaciones en tiempo real via WebSocket para todos los participantes.
-- Señalización WebRTC para conexiones peer-to-peer.
-- Enrutamiento de media (audio/video) mediante Mediasoup SFU.
-- Timeout automático: si nadie responde en 50 segundos la llamada pasa a `MISSED`.
-- Métricas HTTP expuestas en `/metrics` compatibles con Prometheus.
+</div>
 
 ---
 
-## Stack tecnológico
+## 📑 Tabla de Contenidos
 
-| Capa | Tecnología |
+1. [👤 Integrantes](#1--integrantes)
+2. [🎯 Objetivo del Microservicio](#2--objetivo-del-microservicio)
+3. [⚡ Funcionalidades Principales](#3--funcionalidades-principales)
+4. [📋 Estrategia de Versionamiento y Branches](#4--estrategia-de-versionamiento-y-branches)
+5. [⚙️ Tecnologías Utilizadas](#5-️-tecnologías-utilizadas)
+6. [🧩 Funcionalidad y Endpoints](#6--funcionalidad-y-endpoints)
+7. [🏛️ Arquitectura, Patrones y Módulos](#7-️-arquitectura-patrones-y-módulos)
+8. [⚠️ Manejo de Errores y Estados](#8-️-manejo-de-errores-y-estados)
+9. [🧪 Evidencia de Pruebas y Cobertura](#9--evidencia-de-pruebas-y-cobertura)
+10. [🗂️ Organización del Código](#10-️-organización-del-código)
+11. [🔗 Conexiones con Servicios Externos](#11--conexiones-con-servicios-externos)
+12. [🚀 Ejecución del Proyecto](#12--ejecución-del-proyecto)
+13. [⚙️ Pipelines CI/CD](#13-️-pipelines-cicd)
+14. [☁️ Despliegue en Azure](#14-️-despliegue-en-azure)
+15. [🤝 Integrantes y Contribuciones](#15--integrantes-y-contribuciones)
+
+---
+
+## 1. 👤 Integrantes
+
+- Tulio Riaño Sánchez
+- Julian Camilo Lopez Barrero
+- Juan Sebastián Puentes Julio
+- David Alejandro Patacon Henao
+
+---
+
+## 2. 🎯 Objetivo del Microservicio
+
+**NetCalls** gestiona el ciclo completo de llamadas de voz/video grupales dentro de **OmniCode**. Orquesta el estado de las llamadas (creación, aceptación, rechazo, fin), provee señalización WebSocket para conexiones peer-to-peer WebRTC, y coordina con un servidor Mediasoup SFU para enrutamiento de streams de audio y video. El estado de las llamadas se mantiene en memoria; no requiere base de datos persistente.
+
+---
+
+## 3. ⚡ Funcionalidades Principales
+
+| Funcionalidad | Descripción |
 |---|---|
-| Runtime | Node.js 20 |
-| Framework | NestJS 11 + TypeScript |
-| WebSocket | Socket.IO |
-| Señalización P2P | WebRTC (offer/answer/ICE) |
-| Media Server | Mediasoup SFU |
-| Autenticación | JWT (Bearer token) |
-| Métricas | prom-client (Prometheus) |
-| Testing | Jest 30 + ts-jest |
-| CI/CD | GitHub Actions → Azure Web App |
-| Análisis de calidad | SonarCloud |
+| **Gestión de llamadas grupales** | Crea, acepta, rechaza, finaliza y abandona llamadas entre múltiples participantes. |
+| **Notificaciones en tiempo real** | Difunde eventos de llamada a todos los participantes via Socket.IO. |
+| **Señalización WebRTC P2P** | Relay de SDP offer/answer e ICE candidates entre pares. |
+| **Mediasoup SFU** | Orquesta transportes, producers y consumers en el servidor SFU para audio/video. |
+| **Timeout automático** | Llamadas sin respuesta pasan a `MISSED` tras 50 segundos. |
+| **Invitación dinámica** | Agrega nuevos participantes a una llamada ya en curso. |
+| **Métricas Prometheus** | Expone `http_requests_total` y latencia en `/metrics`. |
 
 ---
 
-## Arquitectura
+## 4. 📋 Estrategia de Versionamiento y Branches
+
+### Estrategia de Ramas (Git Flow)
+
+#### `main` — Estable, dispara CI/CD a Azure
+#### `develop` — Integración de features
+#### `feature/*` — Desarrollo específico
+
+### 4.1 Convenciones para commits
 
 ```
-Cliente A                        Servidor NetCalls                    Cliente B
-   │                                     │                                │
-   │── POST /calls/create ──────────────►│                                │
-   │◄── { callId, status: RINGING } ─────│                                │
-   │                                     │── incoming-call (WS) ─────────►│
-   │                                     │                                │
-   │── WS: join-call ───────────────────►│◄── WS: join-call ──────────────│
-   │                                     │                                │
-   │── WS: ms:get-rtp-capabilities ─────►│                                │
-   │◄── rtpCapabilities ─────────────────│                                │
-   │                                     │                                │
-   │── WS: ms:create-transport ─────────►│                                │
-   │◄── transportParams ─────────────────│                                │
-   │                                     │                                │
-   │── WS: ms:produce ──────────────────►│── ms:new-producer (WS) ───────►│
-   │                                     │                                │
-   │                                     │◄── ms:consume ─────────────────│
-   │                                     │── consumerParams ─────────────►│
+feat: agregar endpoint POST /calls/:id/invite
+fix: corregir timeout de llamada MISSED a 50s
+test: agregar pruebas para mediasoup.service
+docs: documentar flujo WebRTC en README
 ```
 
 ---
 
-## Estructura del proyecto
+## 5. ⚙️ Tecnologías Utilizadas
 
-```
-src/
-├── app.module.ts                  # Módulo raíz
-├── main.ts                        # Bootstrap: CORS, validación global, puerto
-│
-├── auth-integration/
-│   ├── auth-integration.module.ts
-│   └── guards/
-│       └── jwt-auth.guard.ts      # Guard JWT para endpoints REST
-│
-├── calls/
-│   ├── calls.controller.ts        # Endpoints REST (/calls/*)
-│   ├── calls.service.ts           # Lógica de negocio y orquestación
-│   ├── calls.repository.ts        # Persistencia en memoria
-│   │
-│   ├── dto/
-│   │   ├── create-call.dto.ts
-│   │   ├── call-action.dto.ts
-│   │   ├── invite-call.dto.ts
-│   │   └── call-response.dto.ts
-│   │
-│   ├── entities/
-│   │   └── call.entity.ts
-│   │
-│   ├── enum/
-│   │   └── callStatusEnum.ts      # RINGING | ACCEPTED | REJECTED | ENDED | MISSED
-│   │
-│   ├── gateway/
-│   │   └── gateway.ts             # WebSocket gateway (Socket.IO)
-│   │
-│   ├── mappers/
-│   │   └── call.mapper.ts
-│   │
-│   └── mediasoup/
-│       └── mediasoup.service.ts   # Gestión de rooms y transports SFU
-│
-├── events/
-│   └── event.service.ts           # Eventos de negocio (console.log)
-│
-├── metrics/
-│   ├── metrics.controller.ts      # GET /metrics (Prometheus scrape endpoint)
-│   ├── metrics.interceptor.ts     # Interceptor HTTP para medir latencia
-│   └── metrics.service.ts         # Registro de contadores e histogramas
-│
-└── types/
-    └── websocket.types.ts
-```
+| **Tecnología** | **Uso en el proyecto** |
+|---|---|
+| **TypeScript 5.7.3** | Lenguaje base. |
+| **NestJS 11.0.1** | Framework REST + WebSocket. |
+| **Node.js 20** | Runtime. |
+| **Socket.IO 4.8.3** | WebSocket para señalización y notificaciones. |
+| **@nestjs/jwt** | Validación de JWT en REST y WebSocket. |
+| **prom-client 15.1.3** | Métricas Prometheus. |
+| **class-validator** | Validación de DTOs. |
+| **Jest 30** | Framework de pruebas unitarias. |
+| **SonarCloud** | Análisis estático de calidad. |
+| **GitHub Actions** | Pipeline CI/CD. |
+| **Azure Web App** | Despliegue en producción. |
 
 ---
 
-## Instalación
+## 6. 🧩 Funcionalidad y Endpoints
 
-```bash
-npm install
-```
+### REST API (todas requieren `Authorization: Bearer <JWT>`)
 
 ---
 
-## Ejecución
-
-```bash
-# Desarrollo con hot-reload
-npm run start:dev
-
-# Producción
-npm run build
-npm run start:prod
-```
-
-La API queda disponible en `http://localhost:3000`.  
-El socket path es `/calls/socket.io`.
-
----
-
-## API REST
-
-Todos los endpoints requieren el header:
-
-```
-Authorization: Bearer <JWT_TOKEN>
-```
-
-### Crear llamada
-
-```
-POST /calls/create
-```
+#### 1️⃣ Crear Llamada — `POST /calls/create`
 
 ```json
-{
-  "callerId": "user-a",
-  "participants": ["user-b", "user-c"]
-}
+{ "callerId": "user-a", "sessionId": "sess-001", "participants": ["user-b", "user-c"] }
 ```
 
-### Aceptar llamada
+**Response (201):** `CallResponseDto` con `status: RINGING`
 
-```
-POST /calls/:id/accept
-```
+---
+
+#### 2️⃣ Aceptar — `POST /calls/:id/accept`
 
 ```json
-{ "userId": "user-b" }
+{ "userId": "user-b", "sessionId": "sess-001" }
 ```
 
-### Rechazar llamada
+**Response (200):** `CallResponseDto` con `status: ACCEPTED`
 
-```
-POST /calls/:id/reject
-```
+---
 
-```json
-{ "userId": "user-b" }
-```
-
-### Finalizar llamada
-
-```
-POST /calls/:id/end
-```
-
-### Abandonar llamada
-
-```
-POST /calls/:id/leave
-```
+#### 3️⃣ Rechazar — `POST /calls/:id/reject`
 
 ```json
-{ "userId": "user-b" }
-```
-
-### Invitar a llamada
-
-```
-POST /calls/:id/invite
-```
-
-```json
-{ "userId": "user-d" }
-```
-
-### Consultar llamada por ID
-
-```
-GET /calls/:id
-```
-
-### Listar todas las llamadas
-
-```
-GET /calls
+{ "userId": "user-b", "sessionId": "sess-001" }
 ```
 
 ---
 
-## WebSocket — Eventos de llamada
+#### 4️⃣ Finalizar — `POST /calls/:id/end`
 
-Conectar al gateway:
+---
 
-```javascript
-import { io } from 'socket.io-client';
-const socket = io('https://omnicode-api-calls.azurewebsites.net', {
-  path: '/calls/socket.io',
-});
+#### 5️⃣ Abandonar — `POST /calls/:id/leave`
+
+```json
+{ "userId": "user-b", "sessionId": "sess-001" }
 ```
 
-### Eventos que emite el cliente
+---
+
+#### 6️⃣ Unirse — `POST /calls/:id/join`
+
+```json
+{ "userId": "user-b", "sessionId": "sess-001" }
+```
+
+---
+
+#### 7️⃣ Invitar — `POST /calls/:id/invite`
+
+```json
+{ "inviterId": "user-a", "sessionId": "sess-001", "inviteeIds": ["user-d"] }
+```
+
+---
+
+#### 8️⃣ Consultar Llamada — `GET /calls/:id`
+
+#### 9️⃣ Listar Llamadas — `GET /calls`
+
+#### 🔟 Limpiar Llamadas de Usuario — `POST /calls/users/:userId/cleanup`
+
+---
+
+### WebSocket Gateway (`/calls/socket.io`)
+
+**Autenticación:** JWT en header `Authorization` del handshake.
+
+#### Eventos que emite el cliente
 
 | Evento | Payload | Descripción |
 |---|---|---|
-| `register` | `{ userId }` | Registrar usuario en el gateway |
-| `join-call` | `{ callId, userId }` | Unirse al room de una llamada |
-| `leave-call` | `{ callId, userId }` | Salir del room de una llamada |
+| `register` | `{ userId, sessionId }` | Registrar usuario en el gateway |
+| `join-call` | `{ callId, userId }` | Unirse al room |
+| `leave-call` | `{ callId, userId }` | Salir del room |
 | `ping` | — | Heartbeat |
-| `webrtc:offer` | `{ to, signal }` | Reenviar oferta SDP a otro usuario |
-| `webrtc:answer` | `{ to, signal }` | Reenviar respuesta SDP |
-| `webrtc:ice-candidate` | `{ to, signal }` | Reenviar ICE candidate |
-| `user:mute-changed` | `{ callId, userId, isMuted }` | Notificar cambio de mute |
+| `webrtc:offer` | `{ to, signal }` | Relay oferta SDP |
+| `webrtc:answer` | `{ to, signal }` | Relay respuesta SDP |
+| `webrtc:ice-candidate` | `{ to, signal }` | Relay ICE candidate |
+| `user:mute-changed` | `{ callId, userId, isMuted }` | Cambio de mute |
 
-### Eventos que recibe el cliente
+#### Señalización Mediasoup SFU
 
-| Evento | Descripción |
-|---|---|
-| `registered` | Confirmación de registro |
-| `incoming-call` | Llamada entrante |
-| `call-accepted` | Un participante aceptó |
-| `call-rejected` | Un participante rechazó |
-| `call-ended` | La llamada finalizó |
-| `call-missed` | La llamada expiró sin respuesta |
-| `call-in-progress` | Llamada activa al reconectar |
-| `user-joined` | Un usuario se unió |
-| `user-left` | Un usuario salió |
-| `webrtc:offer` | Oferta SDP entrante |
-| `webrtc:answer` | Respuesta SDP entrante |
-| `webrtc:ice-candidate` | ICE candidate entrante |
-| `user:mute-changed` | Cambio de mute de otro usuario |
+| Evento | Payload | Descripción |
+|---|---|---|
+| `ms:get-rtp-capabilities` | `{ callId }` | Capacidades RTP del router |
+| `ms:create-transport` | `{ callId }` | Crear transport send/recv |
+| `ms:connect-transport` | `{ callId, transportId, dtlsParameters }` | Conectar transport |
+| `ms:produce` | `{ callId, transportId, kind, rtpParameters }` | Publicar stream |
+| `ms:get-producers` | `{ callId }` | Listar producers activos |
+| `ms:consume` | `{ callId, transportId, producerId, rtpCapabilities }` | Suscribirse a stream |
+| `ms:resume-consumer` | `{ callId, consumerId }` | Reanudar consumer |
 
 ---
 
-## WebSocket — Señalización Mediasoup SFU
+## 7. 🏛️ Arquitectura, Patrones y Módulos
 
-Flujo para publicar y consumir media:
+### Flujo de una Llamada
 
-### 1. Obtener capacidades RTP del router
-
-```javascript
-socket.emit('ms:get-rtp-capabilities', { callId }, (caps) => { ... });
+```
+Cliente A                   NetCalls                    Cliente B
+   │                           │                            │
+   ├─POST /calls/create ───────►│                            │
+   │◄── { callId, RINGING } ───│                            │
+   │                           ├── incoming-call (WS) ─────►│
+   │── WS: join-call ──────────►│◄── WS: join-call ──────────│
+   │── ms:get-rtp-capabilities ►│                            │
+   │── ms:create-transport ────►│                            │
+   │── ms:produce ─────────────►│── ms:new-producer (WS) ───►│
+   │                           │◄── ms:consume ─────────────│
 ```
 
-### 2. Crear transport de envío (send) o recepción (recv)
+### Patrones Aplicados
 
-```javascript
-socket.emit('ms:create-transport', { callId }, (params) => { ... });
-```
-
-### 3. Conectar transport con parámetros DTLS
-
-```javascript
-socket.emit('ms:connect-transport', { callId, transportId, dtlsParameters });
-```
-
-### 4. Producir media (publicar)
-
-```javascript
-socket.emit('ms:produce', { callId, transportId, kind, rtpParameters }, ({ producerId }) => { ... });
-// El resto del room recibe: ms:new-producer { userId, producerId, kind }
-```
-
-### 5. Listar producers existentes
-
-```javascript
-socket.emit('ms:get-producers', { callId }, ({ producers }) => { ... });
-```
-
-### 6. Consumir media de otro producer
-
-```javascript
-socket.emit('ms:consume', { callId, transportId, producerId, rtpCapabilities }, (params) => { ... });
-```
-
-### 7. Reanudar consumer
-
-```javascript
-socket.emit('ms:resume-consumer', { callId, consumerId });
-```
+| Patrón | Dónde | Propósito |
+|---|---|---|
+| **Repository (in-memory)** | `calls.repository.ts` | Map en memoria para estado de llamadas. Sin persistencia; estado efímero. |
+| **Guard** | `JwtAuthGuard` | Valida JWT en REST. |
+| **Mapper** | `call.mapper.ts` | Convierte `Call` entity → `CallResponseDto`. |
+| **Proxy HTTP** | `mediasoup.service.ts` | Reenvía operaciones SFU al servidor Mediasoup externo. |
+| **Interceptor** | `MetricsInterceptor` | Tracking de latencia Prometheus. |
 
 ---
 
-## Estados de llamada
+## 8. ⚠️ Manejo de Errores y Estados
+
+### Ciclo de Vida de una Llamada
 
 ```
 createCall ──► RINGING
@@ -340,25 +255,162 @@ createCall ──► RINGING
          │                 │
       ACCEPTED          REJECTED
          │
-    ┌────┴────┐
-    │         │
+    ┌────┴─────┐
+    │          │
   endCall  timeout (50s)
-    │         │
-  ENDED     MISSED
+    │          │
+  ENDED      MISSED
+```
+
+### Errores HTTP
+
+| ⚠️ Escenario | 🔢 HTTP | Descripción |
+|:---|:---:|:---|
+| JWT inválido | 401 | Guard rechaza la petición |
+| Llamada no encontrada | 404 | Repositorio no encuentra el ID |
+| Acción inválida para estado actual | 409 | Lógica de servicio rechaza transición |
+| Validación de DTO | 422 | `ValidationPipe` global |
+
+---
+
+## 9. 🧪 Evidencia de Pruebas y Cobertura
+
+### Suites de prueba — 8 archivos
+
+```
+test/unit/
+├── calls.controller.spec.ts
+├── calls.service.spec.ts
+├── calls.repository.spec.ts
+├── gateway.spec.ts
+├── call.mapper.spec.ts
+├── event.service.spec.ts
+├── jwt-auth.guard.spec.ts
+└── app.e2e-spec.ts
+```
+
+### Cómo ejecutar
+
+```bash
+npm run test          # Unitarias
+npm run test:cov      # Cobertura (LCOV)
 ```
 
 ---
 
-## Testing
+## 10. 🗂️ Organización del Código
 
-```bash
-# Ejecutar tests
-npm run test
-
-# Con reporte de cobertura
-npm run test:cov
+```
+NetCalls/
+│
+├── src/
+│   ├── main.ts                          # Bootstrap, CORS, Swagger
+│   ├── app.module.ts
+│   ├── auth-integration/
+│   │   └── guards/jwt-auth.guard.ts     # JWT para REST
+│   ├── calls/
+│   │   ├── calls.controller.ts          # Endpoints REST /calls/*
+│   │   ├── calls.service.ts             # Lógica de negocio + timeouts
+│   │   ├── calls.repository.ts          # Map en memoria
+│   │   ├── dto/                         # create, action, invite, response
+│   │   ├── entities/call.entity.ts
+│   │   ├── enum/callStatusEnum.ts       # RINGING | ACCEPTED | REJECTED | ENDED | MISSED
+│   │   ├── gateway/gateway.ts           # Socket.IO gateway
+│   │   ├── mappers/call.mapper.ts
+│   │   └── mediasoup/mediasoup.service.ts  # HTTP client → SFU server
+│   ├── events/event.service.ts          # Eventos de negocio
+│   ├── metrics/                         # Prometheus
+│   └── types/websocket.types.ts
+│
+├── test/unit/
+├── .github/workflows/main_omnicode-api-calls.yml
+├── package.json
+├── sonar-project.properties
+└── tsconfig.json
 ```
 
-Los tests unitarios se encuentran en `test/unit/` y cubren: gateway, servicio de llamadas, repositorio, controlador, mapper, guard JWT y servicio de eventos.
+---
 
-El análisis de calidad con SonarCloud se ejecuta automáticamente en cada push a `main`.
+## 11. 🔗 Conexiones con Servicios Externos
+
+| Servicio | Variable de Entorno | Descripción |
+|---|---|---|
+| **Mediasoup SFU** | `MEDIASOUP_SERVER_URL` | Servidor SFU para rooms de audio/video. Default: `http://localhost:3001`. |
+| **JWT** (NetAuthentication) | `JWT_SECRET` | Secreto compartido para validar tokens. |
+| **SonarCloud** | `SONAR_TOKEN` | Análisis estático (org: n3trs). |
+
+---
+
+## 12. 🚀 Ejecución del Proyecto
+
+```bash
+npm install
+npm run start:dev
+```
+
+📍 **URL Local:** `http://localhost:3000`
+🔌 **Socket path:** `/calls/socket.io`
+📚 **Swagger:** `http://localhost:3000/api`
+
+### ⚙️ Variables de Entorno
+
+| Variable | Requerida | Default | Descripción |
+|:---|:---:|:---|:---|
+| `PORT` | ❌ | `3000` | Puerto del servidor |
+| `JWT_SECRET` | ✅ | — | Clave JWT |
+| `MEDIASOUP_SERVER_URL` | ❌ | `http://localhost:3001` | URL del SFU |
+
+---
+
+## 13. ⚙️ Pipelines CI/CD
+
+### Pipeline — `main_omnicode-api-calls.yml`
+
+**Triggers:** push a `main`, `workflow_dispatch`
+
+```
+Checkout → Node.js 20.x → npm install → build → test:cov
+    → SonarCloud scan
+    → Azure login (OIDC federated) → Deploy omnicode-api-calls
+```
+
+### Secrets requeridos
+
+| Secret | Descripción |
+|---|---|
+| `SONAR_TOKEN` | SonarCloud (org: n3trs) |
+| `AZUREAPPSERVICE_CLIENTID` | Service Principal |
+| `AZUREAPPSERVICE_TENANTID` | Azure tenant |
+| `AZUREAPPSERVICE_SUBSCRIPTIONID` | Azure subscription |
+
+---
+
+## 14. ☁️ Despliegue en Azure
+
+| Recurso | Valor |
+|---|---|
+| **App Service** | `omnicode-api-calls` |
+| **Runtime** | Node.js 20, Linux |
+| **Slot** | Production |
+
+---
+
+## 15. 🤝 Integrantes y Contribuciones
+
+<div align="center">
+
+![Course](https://img.shields.io/badge/Course-ARSW-orange?style=for-the-badge)
+![Year](https://img.shields.io/badge/Year-2026--1-blue?style=for-the-badge)
+
+| 👤 Integrante | 🎓 Rol |
+|:---|:---|
+| Tulio Riaño Sánchez | Desarrollo y arquitectura |
+| Julian Camilo Lopez Barrero | Desarrollo y arquitectura |
+| Juan Sebastián Puentes Julio | Desarrollo y arquitectura |
+| David Alejandro Patacon Henao | Desarrollo y arquitectura |
+
+> 💡 **NetCalls** orquesta llamadas grupales en OmniCode combinando señalización Socket.IO, WebRTC peer-to-peer y un servidor Mediasoup SFU para streams de audio/video escalables.
+
+**🎓 Escuela Colombiana de Ingeniería Julio Garavito**
+
+</div>
